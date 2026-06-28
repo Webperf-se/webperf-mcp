@@ -1,0 +1,27 @@
+[project]
+name = "webperf-mcp"
+version = "0.1.0"
+description = "MCP server for premium users of api.webperf.se — read-only access to your sites and test results over stdio."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Webperf", email = "support@webperf.se" }]
+keywords = ["mcp", "webperf", "performance", "accessibility", "api"]
+dependencies = [
+    "mcp>=1.2.0",
+    "httpx>=0.27",
+]
+
+[project.urls]
+Homepage = "https://webperf.se"
+Repository = "https://github.com/Webperf-se/webperf-mcp"
+
+[project.scripts]
+webperf-mcp = "webperf_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/webperf_mcp"]
