@@ -19,8 +19,10 @@ from typing import Any
 import httpx
 from mcp.server.fastmcp import FastMCP
 
-API_BASE = os.environ.get("WEBPERF_API_BASE", "https://api.webperf.se").rstrip("/")
-HTTP_TIMEOUT = float(os.environ.get("WEBPERF_HTTP_TIMEOUT", "30"))
+# `or` rather than a .get() default: an MCP client may pass these through as
+# empty strings when the user leaves an optional field blank.
+API_BASE = (os.environ.get("WEBPERF_API_BASE") or "https://api.webperf.se").rstrip("/")
+HTTP_TIMEOUT = float(os.environ.get("WEBPERF_HTTP_TIMEOUT") or "30")
 
 # Mirrors api.webperf.se's own format check (10–100 alphanumeric chars).
 _API_KEY_RE = re.compile(r"^[a-zA-Z0-9]{10,100}$")

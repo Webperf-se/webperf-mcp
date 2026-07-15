@@ -1,0 +1,29 @@
+# Secrets — never ship these inside a distributable bundle.
+# The API key is supplied by the user via manifest user_config at install time.
+.env
+.env.*
+
+# Python build artifacts and local environments
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+uv.lock
+
+# Repo/tooling files that add nothing at runtime
+.git/
+.github/
+.gitignore
+.mcpbignore
+
+# Built bundles (don't nest a bundle inside a bundle)
+*.mcpb
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

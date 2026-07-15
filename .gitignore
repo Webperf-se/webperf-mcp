@@ -8,10 +8,12 @@ dist/
 .venv/
 venv/
 
+# Built extension bundles (attach to a GitHub release instead)
+*.mcpb
+
 # Env / secrets
 .env
 .env.*
-!.env.example
 
 # OS / editor
 .DS_Store
