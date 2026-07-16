@@ -12,6 +12,8 @@ Run it over stdio from any MCP client (Claude Desktop, etc.). No hosting needed.
 
 from __future__ import annotations
 
+import html
+import json
 import os
 import re
 from typing import Any
@@ -84,6 +86,23 @@ def _request(method: str, path: str, *, auth: bool = True, **kwargs: Any) -> Any
         raise WebperfError("API returned a non-JSON response.") from exc
 
 
+def _parse_check_data(raw: Any) -> Any:
+    """Turn the stored json_check_data into clean, parsed JSON.
+
+    The API stores this field as an HTML-escaped JSON string (e.g. `&quot;`
+    instead of `"`). Unescape it and parse it back to real JSON so the model
+    sees structured data, not escaped-string noise. If it is not a parseable
+    string, return it unchanged.
+    """
+    if not isinstance(raw, str):
+        return raw
+    unescaped = html.unescape(raw)
+    try:
+        return json.loads(unescaped)
+    except ValueError:
+        return unescaped
+
+
 def _site_id(site_id: int) -> int:
     """Validate a site id argument."""
     try:
@@ -118,20 +137,30 @@ def list_my_sites() -> dict:
 
 
 @mcp.tool()
-def get_latest_results(site_id: int) -> dict:
+def get_latest_results(site_id: int, type_of_test: int | None = None) -> dict:
     """Get the most recent test results for a site you have access to.
 
     Args:
         site_id: Numeric id of the site (from list_my_sites).
+        type_of_test: Optional numeric test type to return just one test's
+            results (see list_test_types). Omit to return all test types.
 
     Returns the latest run per test type, including ratings and the per-area
     reports (accessibility, performance, standards, security). Use
     list_test_types() to map the numeric `type_of_test` to a readable name.
+
+    This intentionally omits the large raw machine data (`json_check_data`),
+    which can be hundreds of KB per test. If the user explicitly asks for the
+    raw underlying audit data for a specific test, call get_raw_check_data().
     """
     sid = _site_id(site_id)
     data = _request("GET", f"/0.1/stats/{sid}")
     results = []
+    want = str(type_of_test) if type_of_test is not None else None
     for t in data.get("data", []):
+        # The API returns type_of_test as a string; compare as strings.
+        if want is not None and str(t.get("type_of_test")) != want:
+            continue
         results.append(
             {
                 "test_date": t.get("test_date"),
@@ -142,7 +171,7 @@ def get_latest_results(site_id: int) -> dict:
                 "report_performance": t.get("check_report_perf"),
                 "report_standards": t.get("check_report_stand"),
                 "report_security": t.get("check_report_sec"),
-                "json_check_data": t.get("json_check_data"),
+                "has_raw_check_data": bool(t.get("json_check_data")),
             }
         )
     return {
@@ -150,7 +179,48 @@ def get_latest_results(site_id: int) -> dict:
         "uri": data.get("uri"),
         "result_count": len(results),
         "results": results,
+        "note": (
+            "Raw audit data is omitted to keep responses small. Use "
+            "get_raw_check_data(site_id, type_of_test) to fetch it for one test."
+        ),
     }
+
+
+@mcp.tool()
+def get_raw_check_data(site_id: int, type_of_test: int) -> dict:
+    """Get the raw underlying audit data for ONE test on a site.
+
+    Only call this when the user explicitly asks for the raw/detailed machine
+    data behind a score — it can be hundreds of KB. get_latest_results() is
+    the right tool for normal questions about scores and reports.
+
+    Args:
+        site_id: Numeric id of the site (from list_my_sites).
+        type_of_test: Numeric test type to fetch raw data for (see
+            list_test_types and the `type_of_test` field of get_latest_results).
+
+    Returns the parsed `json_check_data` for the single most recent run of that
+    test type. Returns raw_check_data=None if that test has no raw data.
+    """
+    sid = _site_id(site_id)
+    data = _request("GET", f"/0.1/stats/{sid}")
+    want = str(type_of_test)
+    for t in data.get("data", []):
+        # The API returns type_of_test as a string; compare as strings.
+        if str(t.get("type_of_test")) != want:
+            continue
+        raw = t.get("json_check_data")
+        return {
+            "site_id": sid,
+            "uri": data.get("uri"),
+            "type_of_test": type_of_test,
+            "test_date": t.get("test_date"),
+            "raw_check_data": _parse_check_data(raw),
+        }
+    raise WebperfError(
+        f"No test of type {type_of_test} found for site {sid}. "
+        "Use get_latest_results() to see which test types are available."
+    )
 
 
 @mcp.tool()

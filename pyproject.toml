@@ -1,6 +1,6 @@
 [project]
 name = "webperf-mcp"
-version = "0.1.0"
+version = "0.1.1"
 description = "MCP server for premium users of api.webperf.se — read-only access to your sites and test results over stdio."
 readme = "README.md"
 requires-python = ">=3.10"

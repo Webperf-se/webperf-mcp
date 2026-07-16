@@ -36,9 +36,15 @@ This is the important part.
 | Tool | What it does | Endpoint |
 | --- | --- | --- |
 | `list_my_sites` | Lists the sites your key can access | `GET /0.1/stats/` |
-| `get_latest_results(site_id)` | Latest test results for a site | `GET /0.1/stats/{site_id}` |
+| `get_latest_results(site_id, type_of_test?)` | Latest test results for a site (scores and readable reports). Omits the large raw audit data; pass `type_of_test` to narrow to one test | `GET /0.1/stats/{site_id}` |
+| `get_raw_check_data(site_id, type_of_test)` | Opt-in: raw underlying audit data for **one** test, unescaped and parsed to JSON. Large (hundreds of KB) — only for when you explicitly want the machine detail behind a score | `GET /0.1/stats/{site_id}` |
 | `get_test_history(site_id)` | Historical monthly scores for a site | `GET /0.1/stats_per_month/{site_id}` |
 | `list_test_types(lang, active_only)` | Catalogue of test types (open data, no key) to read numeric `type_of_test` ids | `GET /v1/tests` |
+
+`get_latest_results` deliberately leaves out each test's raw `json_check_data`
+(which can be hundreds of KB per test) to keep responses small and fast. When
+you actually want that detail for a specific test, `get_raw_check_data` fetches
+it for that one test and returns clean, parsed JSON.
 
 ## Install
 
@@ -125,11 +131,11 @@ These are read from the process environment — set them in your MCP client's
 ## Building the bundle (maintainers)
 
 [`manifest.json`](manifest.json) describes the extension: the `uv` runtime, the
-four tools, and the `user_config` fields Claude Desktop prompts for.
+tools, and the `user_config` fields Claude Desktop prompts for.
 
 ```bash
 npx @anthropic-ai/mcpb validate manifest.json
-npx @anthropic-ai/mcpb pack . webperf-mcp-0.1.0.mcpb
+npx @anthropic-ai/mcpb pack . webperf-mcp-0.1.1.mcpb
 ```
 
 Attach the resulting `.mcpb` to a GitHub release so the download link above
@@ -140,7 +146,7 @@ resolves. Keep `version` in `manifest.json` in step with `pyproject.toml`.
 secret would ship to every user. Verify with:
 
 ```bash
-unzip -l webperf-mcp-0.1.0.mcpb
+unzip -l webperf-mcp-0.1.1.mcpb
 ```
 
 ## License

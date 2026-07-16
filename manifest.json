@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "webperf-mcp",
   "display_name": "Webperf",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Read-only access to your sites and test results from api.webperf.se.",
   "long_description": "Gives premium users of api.webperf.se read-only access to their own sites and test results, so you can ask about accessibility, performance, standards and security scores in plain language.\n\nThe server runs locally on your machine and is a thin client over the existing public Webperf HTTP API. It adds no privileges of its own: every request carries your personal API key, and all authorization stays server-side at api.webperf.se. It can never show data your key could not already fetch directly, and it exposes only listing and reading — no retesting or other changes.",
   "author": {
@@ -70,6 +70,10 @@
     {
       "name": "get_latest_results",
       "description": "Get the most recent test results for a site"
+    },
+    {
+      "name": "get_raw_check_data",
+      "description": "Get the raw underlying audit data for one test on a site (opt-in; large)"
     },
     {
       "name": "get_test_history",
