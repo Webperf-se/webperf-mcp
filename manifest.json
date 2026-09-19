@@ -2,9 +2,9 @@
   "manifest_version": "0.4",
   "name": "webperf-mcp",
   "display_name": "Webperf",
-  "version": "0.1.1",
-  "description": "Read-only access to your sites and test results from api.webperf.se.",
-  "long_description": "Gives premium users of api.webperf.se read-only access to their own sites and test results, so you can ask about accessibility, performance, standards and security scores in plain language.\n\nThe server runs locally on your machine and is a thin client over the existing public Webperf HTTP API. It adds no privileges of its own: every request carries your personal API key, and all authorization stays server-side at api.webperf.se. It can never show data your key could not already fetch directly, and it exposes only listing and reading — no retesting or other changes.",
+  "version": "0.2.0",
+  "description": "Read-only access to Webperf data: open public-sector ratings without a key, your own sites and test results with one.",
+  "long_description": "Ask about website quality in plain language.\n\nWithout an API key you get Webperf's open data: every Swedish municipality and region with its accessibility, performance, standards and security ratings, site search, aggregate statistics and the test-type catalogue.\n\nWith a Webperf Cloud API key (Standard or Agency) you also get read-only access to your own sites: latest results and readable reports, monthly history, raw audit data, quota, private tests and audits.\n\nThe server runs locally on your machine and is a thin client over the public Webperf HTTP API. It adds no privileges of its own: every keyed request carries your personal API key, and all authorization stays server-side at api.webperf.se. It can never show data your key could not already fetch directly, and it exposes only listing and reading. No retesting or other changes.",
   "author": {
     "name": "Webperf",
     "email": "support@webperf.se",
@@ -27,6 +27,7 @@
     "accessibility",
     "performance",
     "web quality",
+    "open data",
     "api"
   ],
   "server": {
@@ -36,6 +37,7 @@
       "command": "uv",
       "args": [
         "run",
+        "--frozen",
         "--directory",
         "${__dirname}",
         "src/webperf_mcp/server.py"
@@ -49,39 +51,87 @@
   "user_config": {
     "api_key": {
       "type": "string",
-      "title": "API key",
-      "description": "Your personal premium API key from api.webperf.se. It is stored in your operating system's keychain and sent only to the Webperf API.",
+      "title": "API key (optional)",
+      "description": "Your personal Webperf Cloud API key, for reading your own sites. Leave empty to use only the open-data tools. Stored in your operating system's keychain and sent only to the Webperf API.",
       "sensitive": true,
-      "required": true
+      "required": false
     },
     "api_base": {
       "type": "string",
       "title": "API base URL",
-      "description": "Leave as-is unless you are testing against a staging environment.",
+      "description": "Leave as-is unless you are testing against a staging environment. Must be https.",
       "default": "https://api.webperf.se",
       "required": false
     }
   },
   "tools": [
     {
+      "name": "list_test_types",
+      "description": "List Webperf Core test types, to interpret numeric test ids (open data)"
+    },
+    {
+      "name": "list_public_sector_ratings",
+      "description": "Every Swedish municipality or region with its current ratings (open data)"
+    },
+    {
+      "name": "search_public_sites",
+      "description": "Search public-sector sites by name or URL (open data)"
+    },
+    {
+      "name": "get_public_site",
+      "description": "Ratings and facts for one public-sector site (open data)"
+    },
+    {
+      "name": "get_public_stats",
+      "description": "Aggregate public-sector statistics (open data)"
+    },
+    {
+      "name": "check_api_key",
+      "description": "Check whether the configured API key works and what it reaches"
+    },
+    {
       "name": "list_my_sites",
-      "description": "List the websites your premium API key can access"
+      "description": "List the websites your API key can access"
+    },
+    {
+      "name": "get_site_details",
+      "description": "Title, address, category and current ratings for one of your sites"
     },
     {
       "name": "get_latest_results",
-      "description": "Get the most recent test results for a site"
+      "description": "Most recent test results and readable reports for one of your sites"
     },
     {
       "name": "get_raw_check_data",
-      "description": "Get the raw underlying audit data for one test on a site (opt-in; large)"
+      "description": "Raw underlying audit data for one test on a site (opt-in; large)"
     },
     {
       "name": "get_test_history",
-      "description": "Get historical monthly scores for a site"
+      "description": "Historical monthly scores for one of your sites"
     },
     {
-      "name": "list_test_types",
-      "description": "List Webperf Core test types, to interpret numeric test ids"
+      "name": "get_quota",
+      "description": "Test credits for a site: cap, used and available"
+    },
+    {
+      "name": "list_categories",
+      "description": "Site categories on webperf.se with average ratings, for benchmarking"
+    },
+    {
+      "name": "list_private_tests",
+      "description": "Private one-off test pages ordered for a site"
+    },
+    {
+      "name": "get_private_test_result",
+      "description": "Latest result of one private test"
+    },
+    {
+      "name": "list_audits",
+      "description": "Completed audits for a site and their report files"
+    },
+    {
+      "name": "get_audit_file",
+      "description": "Read one JSON summary file from an audit"
     }
   ],
   "compatibility": {
