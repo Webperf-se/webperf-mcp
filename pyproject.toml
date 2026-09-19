@@ -15,7 +15,7 @@ classifiers = [
 dependencies = [
     # mcp 2.0 (2026-07-28) renamed FastMCP and broke imports; stay on 1.x
     # until the server is ported. 1.10 is where tool annotations landed.
-    "mcp>=1.10,<2",
+    "mcp>=1.10,<3",
     "httpx>=0.27,<1",
 ]
 
