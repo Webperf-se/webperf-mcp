@@ -1,9 +1,11 @@
-# Secrets — never ship these inside a distributable bundle.
+# Secrets. Never ship these inside a distributable bundle.
 # The API key is supplied by the user via manifest user_config at install time.
 .env
 .env.*
 
-# Python build artifacts and local environments
+# Python build artifacts and local environments. NOTE: uv.lock is deliberately
+# NOT ignored; the bundle runs `uv run --frozen` and needs it for a
+# reproducible install.
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -12,13 +14,17 @@ build/
 dist/
 .venv/
 venv/
-uv.lock
+.pytest_cache/
+.ruff_cache/
 
 # Repo/tooling files that add nothing at runtime
 .git/
 .github/
 .gitignore
 .mcpbignore
+tests/
+tools/
+CHANGELOG.md
 
 # Built bundles (don't nest a bundle inside a bundle)
 *.mcpb

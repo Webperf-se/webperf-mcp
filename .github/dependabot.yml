@@ -1,0 +1,13 @@
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    # A major bump of mcp is exactly the kind of change that needs a human:
+    # mcp 2.0 broke the FastMCP import. Dependabot will still open the PR,
+    # and CI on that PR will show whether the server boots.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

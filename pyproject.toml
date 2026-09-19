@@ -1,20 +1,34 @@
 [project]
 name = "webperf-mcp"
-version = "0.1.1"
-description = "MCP server for premium users of api.webperf.se — read-only access to your sites and test results over stdio."
+dynamic = ["version"]
+description = "MCP server for api.webperf.se: open data without a key, your own sites and test results with one. Read-only, over stdio."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Webperf", email = "support@webperf.se" }]
 keywords = ["mcp", "webperf", "performance", "accessibility", "api"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Internet :: WWW/HTTP",
+]
 dependencies = [
-    "mcp>=1.2.0",
-    "httpx>=0.27",
+    # mcp 2.0 (2026-07-28) renamed FastMCP and broke imports; stay on 1.x
+    # until the server is ported. 1.10 is where tool annotations landed.
+    "mcp>=1.10,<2",
+    "httpx>=0.27,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.5",
 ]
 
 [project.urls]
 Homepage = "https://webperf.se"
 Repository = "https://github.com/Webperf-se/webperf-mcp"
+Changelog = "https://github.com/Webperf-se/webperf-mcp/blob/main/CHANGELOG.md"
 
 [project.scripts]
 webperf-mcp = "webperf_mcp.server:main"
@@ -23,5 +37,19 @@ webperf-mcp = "webperf_mcp.server:main"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.version]
+path = "src/webperf_mcp/__init__.py"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/webperf_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]

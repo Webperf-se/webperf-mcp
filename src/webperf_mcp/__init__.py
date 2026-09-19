@@ -1,3 +1,3 @@
-"""MCP server for premium users of api.webperf.se."""
+"""MCP server for api.webperf.se: open data without a key, your own sites with one."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
