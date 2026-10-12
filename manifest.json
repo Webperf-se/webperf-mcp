@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "webperf-mcp",
   "display_name": "Webperf",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Read-only access to Webperf data: open public-sector ratings without a key, your own sites and test results with one.",
   "long_description": "Ask about website quality in plain language.\n\nWithout an API key you get Webperf's open data: every Swedish municipality and region with its accessibility, performance, standards and security ratings, site search, aggregate statistics and the test-type catalogue.\n\nWith a Webperf Cloud API key (Standard or Agency) you also get read-only access to your own sites: latest results and readable reports, monthly history, raw audit data, quota, private tests and audits.\n\nThe server runs locally on your machine and is a thin client over the public Webperf HTTP API. It adds no privileges of its own: every keyed request carries your personal API key, and all authorization stays server-side at api.webperf.se. It can never show data your key could not already fetch directly, and it exposes only listing and reading. No retesting or other changes.",
   "author": {
