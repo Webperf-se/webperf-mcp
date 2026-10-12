@@ -110,6 +110,10 @@
       "description": "Historical monthly scores for one of your sites"
     },
     {
+      "name": "get_crux",
+      "description": "Real-visitor Core Web Vitals from Chrome UX Report, weekly or daily, for one of your sites"
+    },
+    {
       "name": "get_quota",
       "description": "Test credits for a site: cap, used and available"
     },

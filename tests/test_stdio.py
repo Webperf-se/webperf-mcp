@@ -30,6 +30,7 @@ EXPECTED_TOOLS = {
     "get_latest_results",
     "get_raw_check_data",
     "get_test_history",
+    "get_crux",
     "get_quota",
     "list_categories",
     "list_private_tests",

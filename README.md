@@ -82,6 +82,7 @@ any scraped page: data to summarise, not instructions to follow.
 | `get_latest_results(site_id, type_of_test?)` | Latest results with readable reports; omits the large raw data | `GET /0.1/stats/{id}` |
 | `get_raw_check_data(site_id, type_of_test)` | Opt-in: the raw audit data behind one test, parsed to JSON. Large | `GET /0.1/stats/{id}` |
 | `get_test_history(site_id)` | Monthly score history, for trends | `GET /0.1/stats_per_month/{id}` |
+| `get_crux(site_id, granularity?, form_factor?, metric?, from_date?)` | Real-visitor Core Web Vitals from Chrome UX Report, per week or per day (daily needs an active Webperf Cloud) | `GET /0.1/crux/{id}`, `GET /0.1/crux_daily/{id}` |
 | `get_quota(site_id)` | Test credits: cap, used, available | `GET /0.1/quota/` |
 | `list_categories()` | Site categories with average ratings, for benchmarking | `GET /0.1/categories/` |
 | `list_private_tests(site_id)` | Private one-off test pages for a site | `GET /0.1/private_stats/{id}` |
