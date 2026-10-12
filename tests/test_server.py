@@ -497,3 +497,70 @@ def test_good_numeric_env_is_used():
 
 def test_cache_ttl_of_zero_is_honoured_not_replaced_by_the_default():
     assert server._float_env("WEBPERF_CACHE_TTL", 60.0, {"WEBPERF_CACHE_TTL": "0"}) == 0.0
+
+
+# --- CrUX ------------------------------------------------------------------
+
+
+def _crux_body(rows, **extra):
+    return {"premium_active": True, "latest_period_end": "2026-10-09",
+            "result_count": len(rows), "data": rows, **extra}
+
+
+def test_crux_weekly_defaults_to_phone_and_core_web_vitals():
+    seen = {}
+
+    def handler(request):
+        seen["path"] = request.url.path
+        seen["params"] = dict(request.url.params)
+        row = {"metric": "largest_contentful_paint", "p75": 2900.0}
+        return json_response(200, _crux_body([row]))
+
+    install(handler)
+    result = server.get_crux(3843)
+    assert seen["path"] == "/0.1/crux/3843"
+    assert seen["params"] == {
+        "form_factor": "phone",
+        "metric": "largest_contentful_paint,cumulative_layout_shift,interaction_to_next_paint",
+    }
+    assert result["granularity"] == "weekly"
+    assert result["result_count"] == 1
+    assert result["latest_period_end"] == "2026-10-09"
+
+
+def test_crux_daily_defaults_to_all_devices_and_passes_filters():
+    seen = {}
+
+    def handler(request):
+        seen["path"] = request.url.path
+        seen["params"] = dict(request.url.params)
+        return json_response(200, _crux_body([]))
+
+    install(handler)
+    server.get_crux(7317, granularity="daily", metric="first_contentful_paint",
+                    from_date="2026-10-01")
+    assert seen["path"] == "/0.1/crux_daily/7317"
+    assert seen["params"] == {"form_factor": "all", "metric": "first_contentful_paint",
+                              "from": "2026-10-01"}
+
+
+def test_crux_empty_daily_explains_why():
+    install(lambda request: json_response(200, _crux_body([], premium_active=False)))
+    result = server.get_crux(1, granularity="daily")
+    assert result["premium_active"] is False
+    assert "Webperf Cloud is not active" in result["note"]
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"granularity": "monthly"},
+    {"granularity": "weekly", "form_factor": "all"},
+    {"granularity": "daily", "form_factor": "tablet"},
+])
+def test_crux_rejects_bad_arguments_without_calling_the_api(kwargs):
+    def handler(request):  # pragma: no cover - must not be reached
+        raise AssertionError("API should not be called")
+
+    install(handler)
+    with pytest.raises(server.WebperfError) as exc:
+        server.get_crux(1, **kwargs)
+    assert exc.value.kind == "bad_request"

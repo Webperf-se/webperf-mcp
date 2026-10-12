@@ -75,7 +75,8 @@ Public data covers Swedish municipalities and regions only.
 With an API key (Webperf Cloud Standard or Agency) you can also read the user's
 own sites. Typical flow: check_api_key once if anything fails, list_my_sites to
 find site ids, get_latest_results for scores and readable reports, get_test_history
-for trends, list_test_types to turn numeric type_of_test ids into names. Only call
+for trends, get_crux for real-visitor Core Web Vitals (LCP, CLS, INP) from Chrome,
+list_test_types to turn numeric type_of_test ids into names. Only call
 get_raw_check_data when the user explicitly wants the raw machine data behind a
 score; it is large.
 
@@ -835,6 +836,94 @@ def get_test_history(site_id: int) -> dict:
         for s in data.get("data", [])
     ]
     return {"site_id": sid, "result_count": len(history), "history": history}
+
+
+CRUX_GRANULARITIES = {
+    # granularity: (endpoint, allowed form factors, default form factor)
+    "weekly": ("/0.1/crux/{sid}", ("phone", "desktop", "tablet"), "phone"),
+    "daily": ("/0.1/crux_daily/{sid}", ("all", "phone", "desktop"), "all"),
+}
+# Core Web Vitals in the order Webperf always shows them.
+CRUX_DEFAULT_METRICS = "largest_contentful_paint,cumulative_layout_shift,interaction_to_next_paint"
+
+
+@mcp.tool(annotations=READ_ONLY)
+def get_crux(
+    site_id: int,
+    granularity: str = "weekly",
+    form_factor: str | None = None,
+    metric: str | None = None,
+    from_date: str | None = None,
+) -> dict:
+    """Get Chrome UX Report (CrUX) field data: how real Chrome visitors experience a site.
+
+    Each row summarises a 28-day window. Consecutive windows overlap almost
+    entirely, so compare a window with the one ending 28 days earlier, not
+    with the previous day or week.
+
+    Args:
+        site_id: Numeric id of the site (from list_my_sites).
+        granularity: "weekly" (windows ending on Saturdays, history going back
+            further than Google keeps it, any site you can access) or "daily"
+            (one window per day for the last 90 days, only for sites with an
+            active Webperf Cloud). Default weekly.
+        form_factor: Comma-separated device types. Weekly: phone, desktop,
+            tablet (default phone, which Google uses to assess Core Web
+            Vitals). Daily: all, phone, desktop (default all, which small
+            sites most often have data for).
+        metric: Comma-separated Google metric names. Default LCP, CLS and INP
+            (largest_contentful_paint, cumulative_layout_shift,
+            interaction_to_next_paint). Others: first_contentful_paint,
+            experimental_time_to_first_byte, round_trip_time and the
+            largest_contentful_paint_image_* breakdown.
+        from_date: Only windows ending on this date or later (YYYY-MM-DD).
+
+    p75 is in milliseconds except for cumulative_layout_shift, which has no
+    unit. Google only publishes data for sites with enough Chrome visits, so
+    days, device types or single metrics can be missing on smaller sites.
+    """
+    sid = _site_id(site_id)
+    key = (granularity or "weekly").strip().lower()
+    if key not in CRUX_GRANULARITIES:
+        raise WebperfError('granularity must be "weekly" or "daily".', kind="bad_request")
+    path, allowed, default_ff = CRUX_GRANULARITIES[key]
+
+    form_factors = (form_factor or default_ff).strip().lower()
+    unknown = [f for f in form_factors.split(",") if f.strip() and f.strip() not in allowed]
+    if unknown:
+        raise WebperfError(
+            f"form_factor for {key} data must be one or more of: {', '.join(allowed)}.",
+            kind="bad_request",
+        )
+    params: dict[str, Any] = {
+        "form_factor": form_factors,
+        "metric": (metric or CRUX_DEFAULT_METRICS).strip(),
+    }
+    if from_date:
+        params["from"] = from_date.strip()
+
+    data = _request("GET", path.format(sid=sid), params=params)
+    rows = data.get("data", [])
+    note = (
+        "Each row is a 28-day window. Compare with the window ending 28 days "
+        "earlier; adjacent windows overlap and their differences are mostly noise."
+    )
+    if not rows and key == "daily":
+        note += (
+            " No daily data: either Webperf Cloud is not active for this site"
+            " (see premium_active) or Google has too few Chrome visits to report."
+        )
+    elif not rows:
+        note += " No data: Google has too few Chrome visits for this site to report."
+    return {
+        "site_id": sid,
+        "granularity": key,
+        "premium_active": data.get("premium_active"),
+        "latest_period_end": data.get("latest_period_end"),
+        "result_count": len(rows),
+        "rows": rows,
+        "note": note,
+    }
 
 
 @mcp.tool(annotations=READ_ONLY)

@@ -1,6 +1,16 @@
 # Changelog
 
-## 0.2.0 (unreleased)
+## 0.3.0 (unreleased)
+
+### Added
+
+- `get_crux`: Chrome UX Report field data per week (`/0.1/crux/{id}`) or
+  per day (`/0.1/crux_daily/{id}`, active Webperf Cloud only). Defaults to
+  LCP, CLS and INP, and to phone (weekly) or all devices (daily), so a
+  plain call stays small.
+  Needs api.webperf.se 1.1.0 or later.
+
+## 0.2.0 (2026-09-19)
 
 ### Fixed
 
