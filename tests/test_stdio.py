@@ -32,6 +32,7 @@ EXPECTED_TOOLS = {
     "get_test_history",
     "get_crux",
     "get_quota",
+    "get_retest_status",
     "list_categories",
     "list_private_tests",
     "get_private_test_result",

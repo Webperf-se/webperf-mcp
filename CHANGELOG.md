@@ -4,6 +4,10 @@
 
 ### Added
 
+- `get_retest_status`: queue position and state (queued, running, done,
+  failed) for a site's ordered retests (`GET /0.1/retest/`, optionally one
+  queue id). Read-only; ordering is still done in Webperf Cloud.
+  Needs the api.webperf.se release that adds `GET /retest/`.
 - `get_crux`: Chrome UX Report field data per week (`/0.1/crux/{id}`) or
   per day (`/0.1/crux_daily/{id}`, active Webperf Cloud only). Defaults to
   LCP, CLS and INP, and to phone (weekly) or all devices (daily), so a
