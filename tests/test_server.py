@@ -326,6 +326,147 @@ def test_quota_sends_site_id_header():
     assert out["available"] == 488
 
 
+def test_retest_status_lists_rows():
+    seen = {}
+
+    def handler(request):
+        seen["path"] = request.url.path
+        seen["headers"] = dict(request.headers)
+        return json_response(200, {
+            "site_id": 3843, "queue_length": 7,
+            "retests": [{"queue_id": 4711, "test_num": 21, "status": "queued", "position": 3,
+                         "server": None, "created": "2026-10-13 20:00:00+02:00", "started": None,
+                         "finished": None, "refunded": False, "result": None}],
+        })
+
+    install(handler)
+    out = server.get_retest_status(3843)
+    assert seen["path"] == "/0.1/retest/"
+    assert seen["headers"]["site-id"] == "3843"
+    assert out["queue_length"] == 7
+    assert out["retests"][0]["status"] == "queued" and out["retests"][0]["position"] == 3
+    assert "server" not in out["retests"][0]
+
+
+def test_retest_status_single_row():
+    seen = {}
+
+    def handler(request):
+        seen["path"] = request.url.path
+        return json_response(200, {
+            "site_id": 3843, "queue_length": 0,
+            "retest": {"queue_id": 4711, "test_num": 21, "status": "done", "position": None,
+                       "created": "x", "started": "y", "finished": "z", "refunded": False,
+                       "result": {"id": 99, "type_of_test": 21, "test_date": "z"}},
+        })
+
+    install(handler)
+    out = server.get_retest_status(3843, queue_id=4711)
+    assert seen["path"] == "/0.1/retest/4711"
+    assert out["retests"][0]["result"]["id"] == 99
+
+
+def _catalogue():
+    def entry(tid, name, retestable, public_only=False):
+        return {"id": tid, "name": name, "active": True,
+                "retestable": retestable, "public_sector_only": public_only}
+
+    return {"tests": [
+        entry(2, "404", True),
+        entry(21, "HTTP", True),
+        entry(26, "A11y statement", True, public_only=True),
+        entry(20, "Webbkoll", False),
+    ]}
+
+
+def test_list_test_types_passes_ordering_flags_through():
+    install(lambda r: json_response(200, _catalogue()))
+    out = server.list_test_types(lang="en")
+    by_id = {t["id"]: t for t in out["tests"]}
+    assert by_id[26]["retestable"] is True and by_id[26]["public_sector_only"] is True
+    assert by_id[20]["retestable"] is False
+
+
+def test_check_api_key_reports_ordering_flag(monkeypatch):
+    monkeypatch.setenv("WEBPERF_API_KEY", "")
+    out = server.check_api_key()
+    assert out["ordering_enabled"] is False
+
+
+def _ordering_api(seen, available=10, post_status=200, post_body=None):
+    def handler(request):
+        path = request.url.path
+        if path == "/v1/tests":
+            return json_response(200, _catalogue())
+        if path == "/0.1/quota/":
+            return json_response(200, {"monthly_quota": 500, "used": 500 - available,
+                                       "available": available, "period_days": 30})
+        if path == "/0.1/retest/" and request.method == "POST":
+            seen["headers"] = dict(request.headers)
+            return json_response(post_status, post_body or {
+                "message": "ok", "queued": [21], "already_queued": [2],
+                "credits_charged": 1, "queue_ids": {"21": 4711}})
+        raise AssertionError(f"unexpected {request.method} {path}")
+    return handler
+
+
+def test_order_retest_posts_explicit_tests_and_reports_charge(monkeypatch):
+    monkeypatch.setenv("WEBPERF_API_KEY", "abcdefghij1234567890")
+    seen = {}
+    install(_ordering_api(seen))
+    out = server.order_retest(3843, [21, 2, 21])
+    assert seen["headers"]["site-id"] == "3843"
+    assert seen["headers"]["testnums"] == "21,2"
+    assert (out["queued"], out["already_queued"], out["credits_charged"]) == ([21], [2], 1)
+    assert out["queue_ids"] == {"21": 4711}
+    assert out["credits_remaining"] == 9
+    assert "get_retest_status" in out["next_step"]
+
+
+def test_order_retest_requires_explicit_tests(monkeypatch):
+    monkeypatch.setenv("WEBPERF_API_KEY", "abcdefghij1234567890")
+    seen = {}
+    install(_ordering_api(seen))
+    with pytest.raises(server.WebperfError):
+        server.order_retest(3843, [])
+    assert seen == {}
+
+
+def test_order_retest_refuses_non_retestable_before_posting(monkeypatch):
+    monkeypatch.setenv("WEBPERF_API_KEY", "abcdefghij1234567890")
+    seen = {}
+    install(_ordering_api(seen))
+    with pytest.raises(server.WebperfError) as exc:
+        server.order_retest(3843, [21, 20])
+    assert "[20]" in str(exc.value)
+    assert seen == {}
+
+
+def test_order_retest_refuses_when_credits_are_short(monkeypatch):
+    monkeypatch.setenv("WEBPERF_API_KEY", "abcdefghij1234567890")
+    seen = {}
+    install(_ordering_api(seen, available=1))
+    with pytest.raises(server.WebperfError) as exc:
+        server.order_retest(3843, [21, 2])
+    assert "Not enough credits" in str(exc.value)
+    assert seen == {}
+
+
+def test_order_retest_surfaces_api_refusal_for_test_26(monkeypatch):
+    monkeypatch.setenv("WEBPERF_API_KEY", "abcdefghij1234567890")
+    seen = {}
+    install(_ordering_api(seen, post_status=400, post_body={
+        "message": "Tests [26] can only be ordered for public-sector websites"}))
+    with pytest.raises(server.WebperfError) as exc:
+        server.order_retest(3843, [26])
+    assert "public-sector" in str(exc.value)
+
+
+def test_order_retest_is_not_registered_by_default():
+    assert not server.ORDERING_ENABLED
+    assert "order_retest" not in {t.name for t in server.mcp._tool_manager.list_tools()}
+
+
 def test_audit_file_allowlist():
     with pytest.raises(server.WebperfError):
         server.get_audit_file(1, "folder", "summaries.zip")
@@ -497,3 +638,70 @@ def test_good_numeric_env_is_used():
 
 def test_cache_ttl_of_zero_is_honoured_not_replaced_by_the_default():
     assert server._float_env("WEBPERF_CACHE_TTL", 60.0, {"WEBPERF_CACHE_TTL": "0"}) == 0.0
+
+
+# --- CrUX ------------------------------------------------------------------
+
+
+def _crux_body(rows, **extra):
+    return {"premium_active": True, "latest_period_end": "2026-10-09",
+            "result_count": len(rows), "data": rows, **extra}
+
+
+def test_crux_weekly_defaults_to_phone_and_core_web_vitals():
+    seen = {}
+
+    def handler(request):
+        seen["path"] = request.url.path
+        seen["params"] = dict(request.url.params)
+        row = {"metric": "largest_contentful_paint", "p75": 2900.0}
+        return json_response(200, _crux_body([row]))
+
+    install(handler)
+    result = server.get_crux(3843)
+    assert seen["path"] == "/0.1/crux/3843"
+    assert seen["params"] == {
+        "form_factor": "phone",
+        "metric": "largest_contentful_paint,cumulative_layout_shift,interaction_to_next_paint",
+    }
+    assert result["granularity"] == "weekly"
+    assert result["result_count"] == 1
+    assert result["latest_period_end"] == "2026-10-09"
+
+
+def test_crux_daily_defaults_to_all_devices_and_passes_filters():
+    seen = {}
+
+    def handler(request):
+        seen["path"] = request.url.path
+        seen["params"] = dict(request.url.params)
+        return json_response(200, _crux_body([]))
+
+    install(handler)
+    server.get_crux(7317, granularity="daily", metric="first_contentful_paint",
+                    from_date="2026-10-01")
+    assert seen["path"] == "/0.1/crux_daily/7317"
+    assert seen["params"] == {"form_factor": "all", "metric": "first_contentful_paint",
+                              "from": "2026-10-01"}
+
+
+def test_crux_empty_daily_explains_why():
+    install(lambda request: json_response(200, _crux_body([], premium_active=False)))
+    result = server.get_crux(1, granularity="daily")
+    assert result["premium_active"] is False
+    assert "Webperf Cloud is not active" in result["note"]
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"granularity": "monthly"},
+    {"granularity": "weekly", "form_factor": "all"},
+    {"granularity": "daily", "form_factor": "tablet"},
+])
+def test_crux_rejects_bad_arguments_without_calling_the_api(kwargs):
+    def handler(request):  # pragma: no cover - must not be reached
+        raise AssertionError("API should not be called")
+
+    install(handler)
+    with pytest.raises(server.WebperfError) as exc:
+        server.get_crux(1, **kwargs)
+    assert exc.value.kind == "bad_request"

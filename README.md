@@ -22,9 +22,12 @@ all authorization stays on the server.
 - **Authorization stays server-side.** api.webperf.se scopes every keyed request
   to the sites your key is granted and returns `403` otherwise. The server
   cannot bypass that: it can never show data your key couldn't fetch directly.
-- **Read-only.** Every tool is a read and is annotated `readOnlyHint` so clients
-  can treat it that way. No retest, audit ordering, or other mutating endpoints
-  are wired up.
+- **Read-only by default.** Every tool is a read and is annotated `readOnlyHint`
+  so clients can treat it that way. The one exception, `order_retest`, exists
+  only when you turn on **Allow ordering tests** (`WEBPERF_ALLOW_ORDERING=true`).
+  It is annotated as a non-idempotent write, so Claude Desktop and Claude Code
+  ask before each order. No audit ordering or other mutating endpoints are
+  wired up.
 - **Your key stays on your machine.** It is sent only as the `api-key` header
   to the configured API base, which must be `https`. The server never writes
   the key anywhere and never includes it in tool output or error text.
@@ -82,7 +85,15 @@ any scraped page: data to summarise, not instructions to follow.
 | `get_latest_results(site_id, type_of_test?)` | Latest results with readable reports; omits the large raw data | `GET /0.1/stats/{id}` |
 | `get_raw_check_data(site_id, type_of_test)` | Opt-in: the raw audit data behind one test, parsed to JSON. Large | `GET /0.1/stats/{id}` |
 | `get_test_history(site_id)` | Monthly score history, for trends | `GET /0.1/stats_per_month/{id}` |
+| `get_crux(site_id, granularity?, form_factor?, metric?, from_date?)` | Real-visitor Core Web Vitals from Chrome UX Report, per week or per day (daily needs an active Webperf Cloud) | `GET /0.1/crux/{id}`, `GET /0.1/crux_daily/{id}` |
 | `get_quota(site_id)` | Test credits: cap, used, available | `GET /0.1/quota/` |
+| `get_retest_status(site_id, queue_id=None)` | Where ordered retests are: queued, running, done or failed | `GET /0.1/retest/` |
+
+### Ordering (opt-in, needs `WEBPERF_ALLOW_ORDERING=true`)
+
+| Tool | What it does | Endpoint |
+| --- | --- | --- |
+| `order_retest(site_id, test_numbers)` | Queue new tests for one of your sites, 1 credit per test. Explicit test list required; refuses non-retestable tests and orders beyond your remaining credits before calling the API. Tests already queued or running are skipped and not charged | `POST /0.1/retest/` |
 | `list_categories()` | Site categories with average ratings, for benchmarking | `GET /0.1/categories/` |
 | `list_private_tests(site_id)` | Private one-off test pages for a site | `GET /0.1/private_stats/{id}` |
 | `get_private_test_result(site_id, private_test_id)` | Latest result of one private test | `GET /0.1/private_stats/{id}/{test}` |
@@ -106,7 +117,9 @@ Download the `.mcpb` bundle from the
 [latest release](https://github.com/Webperf-se/webperf-mcp/releases/latest) and
 **double-click it**. Claude Desktop shows an install prompt and asks for your
 API key. Leave it empty to use only the open data; add it later from
-**Settings → Extensions → Webperf**.
+**Settings → Extensions → Webperf**. The same screen has **Allow ordering
+tests**, off by default; turn it on if you want Claude to be able to order
+new tests for your sites (it asks you before each order).
 
 No JSON to edit, no terminal, and no need to install Python or
 [uv](https://docs.astral.sh/uv/) yourself. The bundle declares the `uv`
@@ -182,6 +195,7 @@ need them when configuring a client by hand.
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
 | `WEBPERF_API_KEY` | no | — | Your Webperf Cloud API key. Without it only the open-data tools work |
+| `WEBPERF_ALLOW_ORDERING` | no | `false` | `true` adds `order_retest`, which spends credits. Off, the server is strictly read-only |
 | `WEBPERF_API_BASE` | no | `https://api.webperf.se` | API base URL (e.g. staging). Must be `https` unless localhost |
 | `WEBPERF_HTTP_TIMEOUT` | no | `30` | Per-request timeout in seconds |
 | `WEBPERF_CACHE_TTL` | no | `60` | Seconds to reuse an identical GET response in-process. `0` disables |

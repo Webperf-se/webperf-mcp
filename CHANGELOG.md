@@ -1,6 +1,39 @@
 # Changelog
 
-## 0.2.0 (unreleased)
+## 0.4.0 (unreleased)
+
+### Added
+
+- `order_retest(site_id, test_numbers)`: queue new tests for one of your own
+  sites, 1 credit per test. **Opt-in**: the tool exists only when
+  `WEBPERF_ALLOW_ORDERING=true` (the "Allow ordering tests" setting in Claude
+  Desktop). It is annotated as a non-idempotent write so clients ask before
+  each call, requires an explicit list of tests, refuses tests that are not
+  retestable and orders that exceed the remaining credits before calling the
+  API, and reports what was queued, what was already queued and the queue ids.
+- `get_retest_status`: queue position and state (queued, running, done,
+  failed) for a site's ordered retests (`GET /0.1/retest/`, optionally one
+  queue id). Needs api.webperf.se 1.2.0 or later.
+- `list_test_types` now includes `retestable` and `public_sector_only`.
+- `check_api_key` reports `ordering_enabled`.
+
+### Changed
+
+- The server is read-only **by default** rather than unconditionally. With
+  ordering off nothing changes; the instructions still say nothing here can
+  start a test.
+
+## 0.3.0 (2026-10-12)
+
+### Added
+
+- `get_crux`: Chrome UX Report field data per week (`/0.1/crux/{id}`) or
+  per day (`/0.1/crux_daily/{id}`, active Webperf Cloud only). Defaults to
+  LCP, CLS and INP, and to phone (weekly) or all devices (daily), so a
+  plain call stays small.
+  Needs api.webperf.se 1.1.0 or later.
+
+## 0.2.0 (2026-09-19)
 
 ### Fixed
 

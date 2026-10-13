@@ -30,7 +30,9 @@ EXPECTED_TOOLS = {
     "get_latest_results",
     "get_raw_check_data",
     "get_test_history",
+    "get_crux",
     "get_quota",
+    "get_retest_status",
     "list_categories",
     "list_private_tests",
     "get_private_test_result",
@@ -45,6 +47,7 @@ def run(coro):
 
 async def _session(env_overrides):
     env = {k: v for k, v in os.environ.items() if not k.startswith("WEBPERF_")}
+    env.setdefault("WEBPERF_TEST_OFFLINE", os.environ.get("WEBPERF_TEST_OFFLINE", ""))
     env.update(env_overrides)
     params = StdioServerParameters(
         command=sys.executable, args=["-m", "webperf_mcp.server"], env=env
@@ -76,6 +79,8 @@ def test_server_boots_and_advertises_read_only_tools():
     body = json.loads(key_check.content[0].text)
     assert key_check.isError is False
     assert body["status"] == "no_key_configured"
+    assert body["ordering_enabled"] is False
+    assert "order_retest" not in init.instructions
 
     if live is not None:
         assert live.isError is False, live.content[0].text
@@ -105,3 +110,24 @@ def test_bogus_key_is_reported_as_rejected_by_live_api():
     body = json.loads(key_check.content[0].text)
     assert body["status"] == "rejected"
     assert "abcdefghij1234567890" not in key_check.content[0].text
+
+
+def test_ordering_is_opt_in_and_marked_as_a_write():
+    init, tools, key_check, _ = run(
+        _session({
+            "WEBPERF_API_KEY": "",
+            "WEBPERF_ALLOW_ORDERING": "true",
+            "WEBPERF_TEST_OFFLINE": "1",
+        })
+    )
+    names = {t.name for t in tools.tools}
+    assert names == EXPECTED_TOOLS | {"order_retest"}
+    order = next(t for t in tools.tools if t.name == "order_retest")
+    assert order.annotations.readOnlyHint is False
+    assert order.annotations.destructiveHint is True
+    assert order.annotations.idempotentHint is False
+    for t in tools.tools:
+        if t.name != "order_retest":
+            assert t.annotations.readOnlyHint is True, t.name
+    assert "order_retest" in init.instructions
+    assert json.loads(key_check.content[0].text)["ordering_enabled"] is True
