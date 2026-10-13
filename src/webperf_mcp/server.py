@@ -65,6 +65,25 @@ READ_ONLY = ToolAnnotations(
     openWorldHint=True,
 )
 
+# order_retest spends the user's credits and queues work on Webperf's servers.
+# No readOnlyHint, and destructiveHint so that clients ask before each call.
+ORDERING = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=True,
+    idempotentHint=False,
+    openWorldHint=True,
+)
+
+
+def _bool_env(name: str, env: dict[str, str] | None = None) -> bool:
+    raw = (env if env is not None else os.environ).get(name, "").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
+# Ordering is opt-in per install (WEBPERF_ALLOW_ORDERING=true). Off, the server
+# is strictly read-only and order_retest is not registered at all.
+ORDERING_ENABLED = _bool_env("WEBPERF_ALLOW_ORDERING")
+
 INSTRUCTIONS = """\
 Read-only access to api.webperf.se, the Swedish website-quality service.
 
@@ -81,7 +100,20 @@ get_raw_check_data when the user explicitly wants the raw machine data behind a
 score; it is large.
 
 Ratings are on a 1-5 scale where 5 is best. -1 means not rated.
+"""
+
+INSTRUCTIONS_READ_ONLY = INSTRUCTIONS + """\
 Nothing here can start a test, change a setting or delete anything.
+"""
+
+INSTRUCTIONS_ORDERING = INSTRUCTIONS + """\
+Ordering is enabled for this install. order_retest queues new tests for one of
+the user's sites and spends credits (1 per test), so only call it when the user
+explicitly asks for a new test, never to refresh data on your own. Before
+ordering, check get_retest_status: a test that is queued or running must not be
+ordered again. After ordering, follow up with get_retest_status at most once a
+minute and say that results normally take a few minutes, longer when the queue
+is long. Nothing here changes settings or deletes anything.
 """
 
 
@@ -423,7 +455,9 @@ def _audit_folder(content: Any) -> str | None:
     return name or None
 
 
-mcp = FastMCP("webperf", instructions=INSTRUCTIONS)
+mcp = FastMCP(
+    "webperf", instructions=INSTRUCTIONS_ORDERING if ORDERING_ENABLED else INSTRUCTIONS_READ_ONLY
+)
 
 
 # ---------------------------------------------------------------------------
@@ -456,6 +490,10 @@ def list_test_types(lang: str = "sv", active_only: bool = True) -> dict:
             "id": t.get("id"),
             "name": t.get("name"),
             "active": t.get("active"),
+            # retestable: the test servers run it, so it can be ordered as a
+            # retest. public_sector_only: orderable only for public-sector sites.
+            "retestable": t.get("retestable"),
+            "public_sector_only": t.get("public_sector_only"),
             "description": t.get("description"),
         }
         for t in data.get("tests", [])
@@ -602,11 +640,18 @@ def check_api_key() -> dict:
     Safe to call any time: one cheap request, no credits used, and the key
     itself is never included in the result. Returns a status of ok,
     no_sites, no_key_configured, bad_format, rejected, rate_limited,
-    unreachable or misconfigured, plus a plain-language next_step.
+    unreachable or misconfigured, plus a plain-language next_step, and
+    ordering_enabled, which says whether this install may order tests.
 
     Call this first when a keyed tool fails, or when the user asks whether
     their key is set up correctly.
     """
+    result = _check_api_key()
+    result["ordering_enabled"] = ORDERING_ENABLED
+    return result
+
+
+def _check_api_key() -> dict:
     key = os.environ.get("WEBPERF_API_KEY", "").strip()
     if not key:
         return {
@@ -983,6 +1028,81 @@ def get_retest_status(site_id: int, queue_id: int | None = None) -> dict:
             if r
         ],
     }
+
+
+def _catalogue_flags() -> tuple[set[int], set[int]]:
+    """(retestable ids, public-sector-only ids) from the test catalogue."""
+    data = _request("GET", "/v1/tests", auth=False, params={"lang": "en", "active": "true"})
+    retestable = {int(t["id"]) for t in data.get("tests", []) if t.get("retestable")}
+    public_only = {int(t["id"]) for t in data.get("tests", []) if t.get("public_sector_only")}
+    return retestable, public_only
+
+
+def order_retest(site_id: int, test_numbers: list[int]) -> dict:
+    """Order new tests for one of the user's sites. Spends 1 credit per test.
+
+    Only call this when the user explicitly asks for a fresh test. Tests that
+    are already queued or running are skipped by the API and not charged, so
+    the result may be cheaper than requested; it says exactly what was queued.
+    Follow up with get_retest_status (at most once a minute), never by ordering
+    again. Results normally arrive within minutes, longer when the queue is long.
+
+    Args:
+        site_id: Numeric id of the site (from list_my_sites).
+        test_numbers: Test ids to run, e.g. [21, 15]. Required and explicit;
+            see list_test_types for which ids are retestable. Test 26 can only
+            be ordered for public-sector sites.
+    """
+    sid = _site_id(site_id)
+    try:
+        wanted = list(dict.fromkeys(int(n) for n in (test_numbers or [])))
+    except (TypeError, ValueError) as exc:
+        raise WebperfError("test_numbers must be a list of integers.", kind="bad_request") from exc
+    if not wanted:
+        raise WebperfError(
+            "test_numbers is required: say which tests to run, e.g. [21]. "
+            "Use list_test_types to see which ids are retestable.",
+            kind="bad_request",
+        )
+
+    retestable, public_only = _catalogue_flags()
+    not_orderable = [n for n in wanted if n not in retestable]
+    if not_orderable:
+        raise WebperfError(
+            f"Tests {not_orderable} cannot be ordered as a retest. Nothing was ordered. "
+            f"Retestable ids: {sorted(retestable)}.",
+            kind="bad_request",
+        )
+
+    quota = _request("GET", "/0.1/quota/", headers=_site_headers(sid), cache=False)
+    available = quota.get("available")
+    if isinstance(available, int) and len(wanted) > available:
+        raise WebperfError(
+            f"Not enough credits: this order needs up to {len(wanted)} but {available} "
+            f"remain for the current 30-day period. Nothing was ordered.",
+            kind="bad_request",
+        )
+
+    headers = {**_site_headers(sid), "testnums": ",".join(str(n) for n in wanted)}
+    data = _request("POST", "/0.1/retest/", headers=headers, cache=False)
+    charged = int(data.get("credits_charged") or 0)
+    return {
+        "site_id": sid,
+        "queued": data.get("queued", []),
+        "already_queued": data.get("already_queued", []),
+        "credits_charged": charged,
+        "credits_remaining": (available - charged) if isinstance(available, int) else None,
+        "queue_ids": data.get("queue_ids", {}),
+        "public_sector_only_requested": [n for n in wanted if n in public_only],
+        "next_step": (
+            "Call get_retest_status(site_id) to follow the order, at most once a minute. "
+            "Do not order again while a test is queued or running."
+        ),
+    }
+
+
+if ORDERING_ENABLED:
+    mcp.tool(annotations=ORDERING)(order_retest)
 
 
 @mcp.tool(annotations=READ_ONLY)

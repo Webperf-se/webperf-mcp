@@ -366,6 +366,107 @@ def test_retest_status_single_row():
     assert out["retests"][0]["result"]["id"] == 99
 
 
+def _catalogue():
+    def entry(tid, name, retestable, public_only=False):
+        return {"id": tid, "name": name, "active": True,
+                "retestable": retestable, "public_sector_only": public_only}
+
+    return {"tests": [
+        entry(2, "404", True),
+        entry(21, "HTTP", True),
+        entry(26, "A11y statement", True, public_only=True),
+        entry(20, "Webbkoll", False),
+    ]}
+
+
+def test_list_test_types_passes_ordering_flags_through():
+    install(lambda r: json_response(200, _catalogue()))
+    out = server.list_test_types(lang="en")
+    by_id = {t["id"]: t for t in out["tests"]}
+    assert by_id[26]["retestable"] is True and by_id[26]["public_sector_only"] is True
+    assert by_id[20]["retestable"] is False
+
+
+def test_check_api_key_reports_ordering_flag(monkeypatch):
+    monkeypatch.setenv("WEBPERF_API_KEY", "")
+    out = server.check_api_key()
+    assert out["ordering_enabled"] is False
+
+
+def _ordering_api(seen, available=10, post_status=200, post_body=None):
+    def handler(request):
+        path = request.url.path
+        if path == "/v1/tests":
+            return json_response(200, _catalogue())
+        if path == "/0.1/quota/":
+            return json_response(200, {"monthly_quota": 500, "used": 500 - available,
+                                       "available": available, "period_days": 30})
+        if path == "/0.1/retest/" and request.method == "POST":
+            seen["headers"] = dict(request.headers)
+            return json_response(post_status, post_body or {
+                "message": "ok", "queued": [21], "already_queued": [2],
+                "credits_charged": 1, "queue_ids": {"21": 4711}})
+        raise AssertionError(f"unexpected {request.method} {path}")
+    return handler
+
+
+def test_order_retest_posts_explicit_tests_and_reports_charge(monkeypatch):
+    monkeypatch.setenv("WEBPERF_API_KEY", "abcdefghij1234567890")
+    seen = {}
+    install(_ordering_api(seen))
+    out = server.order_retest(3843, [21, 2, 21])
+    assert seen["headers"]["site-id"] == "3843"
+    assert seen["headers"]["testnums"] == "21,2"
+    assert (out["queued"], out["already_queued"], out["credits_charged"]) == ([21], [2], 1)
+    assert out["queue_ids"] == {"21": 4711}
+    assert out["credits_remaining"] == 9
+    assert "get_retest_status" in out["next_step"]
+
+
+def test_order_retest_requires_explicit_tests(monkeypatch):
+    monkeypatch.setenv("WEBPERF_API_KEY", "abcdefghij1234567890")
+    seen = {}
+    install(_ordering_api(seen))
+    with pytest.raises(server.WebperfError):
+        server.order_retest(3843, [])
+    assert seen == {}
+
+
+def test_order_retest_refuses_non_retestable_before_posting(monkeypatch):
+    monkeypatch.setenv("WEBPERF_API_KEY", "abcdefghij1234567890")
+    seen = {}
+    install(_ordering_api(seen))
+    with pytest.raises(server.WebperfError) as exc:
+        server.order_retest(3843, [21, 20])
+    assert "[20]" in str(exc.value)
+    assert seen == {}
+
+
+def test_order_retest_refuses_when_credits_are_short(monkeypatch):
+    monkeypatch.setenv("WEBPERF_API_KEY", "abcdefghij1234567890")
+    seen = {}
+    install(_ordering_api(seen, available=1))
+    with pytest.raises(server.WebperfError) as exc:
+        server.order_retest(3843, [21, 2])
+    assert "Not enough credits" in str(exc.value)
+    assert seen == {}
+
+
+def test_order_retest_surfaces_api_refusal_for_test_26(monkeypatch):
+    monkeypatch.setenv("WEBPERF_API_KEY", "abcdefghij1234567890")
+    seen = {}
+    install(_ordering_api(seen, post_status=400, post_body={
+        "message": "Tests [26] can only be ordered for public-sector websites"}))
+    with pytest.raises(server.WebperfError) as exc:
+        server.order_retest(3843, [26])
+    assert "public-sector" in str(exc.value)
+
+
+def test_order_retest_is_not_registered_by_default():
+    assert not server.ORDERING_ENABLED
+    assert "order_retest" not in {t.name for t in server.mcp._tool_manager.list_tools()}
+
+
 def test_audit_file_allowlist():
     with pytest.raises(server.WebperfError):
         server.get_audit_file(1, "folder", "summaries.zip")
