@@ -137,14 +137,14 @@ easiest path is [`uvx`](https://docs.astral.sh/uv/), which runs it in an
 isolated environment. Pin a release tag so you get a tested version:
 
 ```bash
-uvx --from git+https://github.com/Webperf-se/webperf-mcp@v0.2.0 webperf-mcp
+uvx --from git+https://github.com/Webperf-se/webperf-mcp@v0.4.1 webperf-mcp
 ```
 
 For Claude Code:
 
 ```bash
 claude mcp add webperf --env WEBPERF_API_KEY=your-key-here \
-  -- uvx --from git+https://github.com/Webperf-se/webperf-mcp@v0.2.0 webperf-mcp
+  -- uvx --from git+https://github.com/Webperf-se/webperf-mcp@v0.4.1 webperf-mcp
 ```
 
 For a client that takes JSON:

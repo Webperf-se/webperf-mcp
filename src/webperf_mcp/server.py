@@ -30,7 +30,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import httpx
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
 # The .mcpb bundle runs this file as a bare script (`uv run src/webperf_mcp/server.py`),
@@ -455,7 +455,7 @@ def _audit_folder(content: Any) -> str | None:
     return name or None
 
 
-mcp = FastMCP(
+mcp = MCPServer(
     "webperf", instructions=INSTRUCTIONS_ORDERING if ORDERING_ENABLED else INSTRUCTIONS_READ_ONLY
 )
 

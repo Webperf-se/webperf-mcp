@@ -1,6 +1,6 @@
 """Unit tests for the tool functions, with the HTTP layer mocked.
 
-The FastMCP decorator returns the original function, so tools are called
+The MCPServer tool decorator returns the original function, so tools are called
 directly. httpx.MockTransport stands in for api.webperf.se.
 """
 

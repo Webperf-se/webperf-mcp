@@ -1,6 +1,6 @@
 """End-to-end: boot the server over stdio the way an MCP client does.
 
-This is the test that would have caught the mcp 2.0 import break: it runs
+This is the test that catches an upstream mcp break: it runs
 the installed package in a subprocess and speaks the protocol to it.
 
 The live-API part (list_test_types is open data) is skipped when
@@ -66,24 +66,24 @@ async def _session(env_overrides):
 def test_server_boots_and_advertises_read_only_tools():
     init, tools, key_check, live = run(_session({"WEBPERF_API_KEY": ""}))
 
-    assert init.serverInfo.name == "webperf"
+    assert init.server_info.name == "webperf"
     assert init.instructions and "check_api_key" in init.instructions
 
     names = {t.name for t in tools.tools}
     assert names == EXPECTED_TOOLS
     for t in tools.tools:
         assert t.annotations is not None, t.name
-        assert t.annotations.readOnlyHint is True, t.name
-        assert t.annotations.destructiveHint is False, t.name
+        assert t.annotations.read_only_hint is True, t.name
+        assert t.annotations.destructive_hint is False, t.name
 
     body = json.loads(key_check.content[0].text)
-    assert key_check.isError is False
+    assert key_check.is_error is False
     assert body["status"] == "no_key_configured"
     assert body["ordering_enabled"] is False
     assert "order_retest" not in init.instructions
 
     if live is not None:
-        assert live.isError is False, live.content[0].text
+        assert live.is_error is False, live.content[0].text
         payload = json.loads(live.content[0].text)
         assert payload["count"] > 0
         assert payload["tests"][0]["name"]
@@ -99,7 +99,7 @@ def test_bad_base_url_does_not_kill_the_server():
             }
         )
     )
-    assert init.serverInfo.name == "webperf"
+    assert init.server_info.name == "webperf"
     body = json.loads(key_check.content[0].text)
     assert body["status"] == "misconfigured"
 
@@ -123,11 +123,11 @@ def test_ordering_is_opt_in_and_marked_as_a_write():
     names = {t.name for t in tools.tools}
     assert names == EXPECTED_TOOLS | {"order_retest"}
     order = next(t for t in tools.tools if t.name == "order_retest")
-    assert order.annotations.readOnlyHint is False
-    assert order.annotations.destructiveHint is True
-    assert order.annotations.idempotentHint is False
+    assert order.annotations.read_only_hint is False
+    assert order.annotations.destructive_hint is True
+    assert order.annotations.idempotent_hint is False
     for t in tools.tools:
         if t.name != "order_retest":
-            assert t.annotations.readOnlyHint is True, t.name
+            assert t.annotations.read_only_hint is True, t.name
     assert "order_retest" in init.instructions
     assert json.loads(key_check.content[0].text)["ordering_enabled"] is True

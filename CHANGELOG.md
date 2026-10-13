@@ -1,6 +1,16 @@
 # Changelog
 
-## 0.4.0 (unreleased)
+## 0.4.1 (unreleased)
+
+The v0.4.0 tag never produced a bundle: a dependency bump to `mcp>=1.10,<3`
+let a fresh install pick mcp 2, where the `FastMCP` import no longer exists,
+so the release workflow failed. 0.4.1 is 0.4.0 plus the port below.
+
+### Changed
+
+- Ported to mcp 2 (`MCPServer`, formerly `FastMCP`) and now requires
+  `mcp>=2,<3`. No change in behaviour or tool surface; the wire protocol is
+  the same, so existing clients are unaffected.
 
 ### Added
 
