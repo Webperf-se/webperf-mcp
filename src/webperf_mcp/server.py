@@ -948,6 +948,44 @@ def get_quota(site_id: int) -> dict:
 
 
 @mcp.tool(annotations=READ_ONLY)
+def get_retest_status(site_id: int, queue_id: int | None = None) -> dict:
+    """Where a site's ordered retests are in the queue: queued (with position),
+    running, done (with a pointer to the result) or failed (credit refunded).
+
+    Use this instead of ordering again when the user asks whether a retest is
+    finished. Ordering itself is done in Webperf Cloud, not through this server.
+    Poll at most once a minute.
+
+    Args:
+        site_id: Numeric id of the site (from list_my_sites).
+        queue_id: Optional queue id from an order, to look at one retest only.
+    """
+    sid = _site_id(site_id)
+    path = "/0.1/retest/" if queue_id is None else f"/0.1/retest/{int(queue_id)}"
+    data = _request("GET", path, headers=_site_headers(sid), cache=False)
+    retests = data.get("retests") if queue_id is None else [data.get("retest")]
+    return {
+        "site_id": sid,
+        "queue_length": data.get("queue_length"),
+        "retests": [
+            {
+                "queue_id": r.get("queue_id"),
+                "test_num": r.get("test_num"),
+                "status": r.get("status"),
+                "position": r.get("position"),
+                "created": r.get("created"),
+                "started": r.get("started"),
+                "finished": r.get("finished"),
+                "refunded": r.get("refunded"),
+                "result": r.get("result"),
+            }
+            for r in retests
+            if r
+        ],
+    }
+
+
+@mcp.tool(annotations=READ_ONLY)
 def list_categories() -> dict:
     """List the site categories on webperf.se with their average 1-5 ratings.
 

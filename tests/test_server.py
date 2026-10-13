@@ -326,6 +326,46 @@ def test_quota_sends_site_id_header():
     assert out["available"] == 488
 
 
+def test_retest_status_lists_rows():
+    seen = {}
+
+    def handler(request):
+        seen["path"] = request.url.path
+        seen["headers"] = dict(request.headers)
+        return json_response(200, {
+            "site_id": 3843, "queue_length": 7,
+            "retests": [{"queue_id": 4711, "test_num": 21, "status": "queued", "position": 3,
+                         "server": None, "created": "2026-10-13 20:00:00+02:00", "started": None,
+                         "finished": None, "refunded": False, "result": None}],
+        })
+
+    install(handler)
+    out = server.get_retest_status(3843)
+    assert seen["path"] == "/0.1/retest/"
+    assert seen["headers"]["site-id"] == "3843"
+    assert out["queue_length"] == 7
+    assert out["retests"][0]["status"] == "queued" and out["retests"][0]["position"] == 3
+    assert "server" not in out["retests"][0]
+
+
+def test_retest_status_single_row():
+    seen = {}
+
+    def handler(request):
+        seen["path"] = request.url.path
+        return json_response(200, {
+            "site_id": 3843, "queue_length": 0,
+            "retest": {"queue_id": 4711, "test_num": 21, "status": "done", "position": None,
+                       "created": "x", "started": "y", "finished": "z", "refunded": False,
+                       "result": {"id": 99, "type_of_test": 21, "test_date": "z"}},
+        })
+
+    install(handler)
+    out = server.get_retest_status(3843, queue_id=4711)
+    assert seen["path"] == "/0.1/retest/4711"
+    assert out["retests"][0]["result"]["id"] == 99
+
+
 def test_audit_file_allowlist():
     with pytest.raises(server.WebperfError):
         server.get_audit_file(1, "folder", "summaries.zip")

@@ -84,6 +84,7 @@ any scraped page: data to summarise, not instructions to follow.
 | `get_test_history(site_id)` | Monthly score history, for trends | `GET /0.1/stats_per_month/{id}` |
 | `get_crux(site_id, granularity?, form_factor?, metric?, from_date?)` | Real-visitor Core Web Vitals from Chrome UX Report, per week or per day (daily needs an active Webperf Cloud) | `GET /0.1/crux/{id}`, `GET /0.1/crux_daily/{id}` |
 | `get_quota(site_id)` | Test credits: cap, used, available | `GET /0.1/quota/` |
+| `get_retest_status(site_id, queue_id=None)` | Where ordered retests are: queued, running, done or failed | `GET /0.1/retest/` |
 | `list_categories()` | Site categories with average ratings, for benchmarking | `GET /0.1/categories/` |
 | `list_private_tests(site_id)` | Private one-off test pages for a site | `GET /0.1/private_stats/{id}` |
 | `get_private_test_result(site_id, private_test_id)` | Latest result of one private test | `GET /0.1/private_stats/{id}/{test}` |
