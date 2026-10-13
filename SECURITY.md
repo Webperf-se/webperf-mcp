@@ -17,17 +17,23 @@ branches; fixes land in a new tag.
 
 ## Scope
 
-This repository is a **read-only HTTP client**. It holds no data, has no
-database access and grants no privileges of its own. Every keyed request
+This repository is a **read-only HTTP client by default**. It holds no data,
+has no database access and grants no privileges of its own. Every keyed request
 carries the user's personal `api-key` header and all authorization is enforced
-by api.webperf.se.
+by api.webperf.se. The single write, `order_retest`, is registered only when
+the install sets `WEBPERF_ALLOW_ORDERING=true`; it spends the user's own
+credits and nothing else.
 
 In scope:
 
 - Leaking the configured API key (into tool output, error text, logs, URLs or
   the packed `.mcpb` bundle).
 - Sending the key anywhere other than the configured, https, API base.
-- Reaching an endpoint that mutates state — every tool here must be a read.
+- Reaching an endpoint that mutates state without ordering enabled, or any
+  mutation other than `POST /0.1/retest/` with it enabled. Every other tool
+  must be a read.
+- `order_retest` being registered, or callable, when `WEBPERF_ALLOW_ORDERING`
+  is unset or false.
 - Path or parameter handling in `get_audit_file` that escapes the documented
   allowlist.
 - Anything in the release pipeline that could put unreviewed code into a
