@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "webperf-mcp",
   "display_name": "Webperf",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Webperf data in Claude: open public-sector ratings without a key, your own sites and test results with one. Read-only unless you turn on ordering.",
   "long_description": "Ask about website quality in plain language.\n\nWithout an API key you get Webperf's open data: every Swedish municipality and region with its accessibility, performance, standards and security ratings, site search, aggregate statistics and the test-type catalogue.\n\nWith a Webperf Cloud API key (Standard or Agency) you also get read-only access to your own sites: latest results and readable reports, monthly history, raw audit data, quota, private tests and audits.\n\nThe server runs locally on your machine and is a thin client over the public Webperf HTTP API. It adds no privileges of its own: every keyed request carries your personal API key, and all authorization stays server-side at api.webperf.se. It can never show data your key could not already fetch directly.\n\nBy default it exposes only listing and reading. Turn on \"Allow ordering tests\" in the extension settings to add order_retest, which queues new tests for your own sites and spends credits from your quota. Claude Desktop asks you before each order.",
   "author": {
@@ -60,7 +60,7 @@
     "allow_ordering": {
       "type": "boolean",
       "title": "Allow ordering tests",
-      "description": "Adds the order_retest tool, which queues new tests for your own sites and spends credits from your quota. Needs an API key. Off, the server is strictly read-only.",
+      "description": "Adds order_retest and order_private_test, which queue new tests for your own sites and spend credits from your quota (1 per retest, 15 per private page). Needs an API key. Off, the server is strictly read-only.",
       "default": false,
       "required": false
     },
@@ -152,6 +152,14 @@
     {
       "name": "order_retest",
       "description": "Order new tests for one of your sites (1 credit per test). Only present when \"Allow ordering tests\" is on."
+    },
+    {
+      "name": "get_private_raw_check_data",
+      "description": "Raw machine data behind one test type of a private test. Only when the user explicitly wants raw data."
+    },
+    {
+      "name": "order_private_test",
+      "description": "Run the whole suite on individual pages of your site (15 credits per page). Only present when \"Allow ordering tests\" is on."
     }
   ],
   "compatibility": {

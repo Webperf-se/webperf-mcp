@@ -23,11 +23,11 @@ all authorization stays on the server.
   to the sites your key is granted and returns `403` otherwise. The server
   cannot bypass that: it can never show data your key couldn't fetch directly.
 - **Read-only by default.** Every tool is a read and is annotated `readOnlyHint`
-  so clients can treat it that way. The one exception, `order_retest`, exists
-  only when you turn on **Allow ordering tests** (`WEBPERF_ALLOW_ORDERING=true`).
-  It is annotated as a non-idempotent write, so Claude Desktop and Claude Code
-  ask before each order. No audit ordering or other mutating endpoints are
-  wired up.
+  so clients can treat it that way. The two exceptions, `order_retest` and
+  `order_private_test`, exist only when you turn on **Allow ordering tests**
+  (`WEBPERF_ALLOW_ORDERING=true`). They are annotated as non-idempotent
+  writes, so Claude Desktop and Claude Code ask before each order. No audit
+  ordering or other mutating endpoints are wired up.
 - **Your key stays on your machine.** It is sent only as the `api-key` header
   to the configured API base, which must be `https`. The server never writes
   the key anywhere and never includes it in tool output or error text.
@@ -94,9 +94,11 @@ any scraped page: data to summarise, not instructions to follow.
 | Tool | What it does | Endpoint |
 | --- | --- | --- |
 | `order_retest(site_id, test_numbers)` | Queue new tests for one of your sites, 1 credit per test. Explicit test list required; refuses non-retestable tests and orders beyond your remaining credits before calling the API. Tests already queued or running are skipped and not charged | `POST /0.1/retest/` |
+| `order_private_test(site_id, urls, confirm_large_order?)` | Run the whole suite on individual pages of your site, 15 credits per page, at most 10. Pages must be on the site's domain; pages ordered in the last 24 hours are skipped and not charged; more than 5 new pages need the user's confirmation first | `POST /0.1/test_once/` |
 | `list_categories()` | Site categories with average ratings, for benchmarking | `GET /0.1/categories/` |
 | `list_private_tests(site_id)` | Private one-off test pages for a site | `GET /0.1/private_stats/{id}` |
 | `get_private_test_result(site_id, private_test_id)` | Latest result of one private test | `GET /0.1/private_stats/{id}/{test}` |
+| `get_private_raw_check_data(site_id, private_test_id, type_of_test)` | Raw machine data behind one test type of a private test (large; explicit requests only) | `GET /0.1/private_stats/{id}/{test}?include_raw_data=true` |
 | `list_audits(site_id)` | Completed audits and their report files | `POST /0.1/audits/` |
 | `get_audit_file(site_id, folder, file)` | One JSON summary file from an audit | `GET /0.1/audit_file/` |
 
@@ -195,7 +197,7 @@ need them when configuring a client by hand.
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
 | `WEBPERF_API_KEY` | no | — | Your Webperf Cloud API key. Without it only the open-data tools work |
-| `WEBPERF_ALLOW_ORDERING` | no | `false` | `true` adds `order_retest`, which spends credits. Off, the server is strictly read-only |
+| `WEBPERF_ALLOW_ORDERING` | no | `false` | `true` adds `order_retest` and `order_private_test`, which spend credits. Off, the server is strictly read-only |
 | `WEBPERF_API_BASE` | no | `https://api.webperf.se` | API base URL (e.g. staging). Must be `https` unless localhost |
 | `WEBPERF_HTTP_TIMEOUT` | no | `30` | Per-request timeout in seconds |
 | `WEBPERF_CACHE_TTL` | no | `60` | Seconds to reuse an identical GET response in-process. `0` disables |

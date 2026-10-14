@@ -1,6 +1,25 @@
 # Changelog
 
-## 0.4.1 (unreleased)
+## 0.5.0 (unreleased)
+
+### Added
+
+- `order_private_test(site_id, urls, confirm_large_order=False)`: run the
+  whole suite on individual pages of your own site, 15 credits per page.
+  Same opt-in as `order_retest` (`WEBPERF_ALLOW_ORDERING=true`) and the same
+  write annotations. Before calling the API it checks that the pages are on
+  the site's domain, caps at 10 pages, skips pages ordered in the last 24
+  hours without charging, refuses orders beyond the remaining credits, and
+  stops at more than 5 new pages until the user has confirmed the cost
+  (`confirm_large_order=true`).
+- `get_private_raw_check_data(site_id, private_test_id, type_of_test)`: raw
+  machine data for one test type of a private test. Needs api.webperf.se
+  1.2.1 or later.
+- `get_private_test_result` reports progress: `tests_done`, `tests_expected`,
+  `pending_types` and `complete`, so a client can tell a finished page from
+  one still being tested.
+
+## 0.4.1 (2026-10-13)
 
 The v0.4.0 tag never produced a bundle: a dependency bump to `mcp>=1.10,<3`
 let a fresh install pick mcp 2, where the `FastMCP` import no longer exists,

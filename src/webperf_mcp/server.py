@@ -97,7 +97,7 @@ find site ids, get_latest_results for scores and readable reports, get_test_hist
 for trends, get_crux for real-visitor Core Web Vitals (LCP, CLS, INP) from Chrome,
 list_test_types to turn numeric type_of_test ids into names. Only call
 get_raw_check_data when the user explicitly wants the raw machine data behind a
-score; it is large.
+score; it is large. The same goes for get_private_raw_check_data.
 
 Ratings are on a 1-5 scale where 5 is best. -1 means not rated.
 """
@@ -113,7 +113,17 @@ explicitly asks for a new test, never to refresh data on your own. Before
 ordering, check get_retest_status: a test that is queued or running must not be
 ordered again. After ordering, follow up with get_retest_status at most once a
 minute and say that results normally take a few minutes, longer when the queue
-is long. Nothing here changes settings or deletes anything.
+is long.
+
+order_private_test runs the whole test suite on individual pages of the user's
+site and costs 15 credits per page, so state the cost before calling it. Pages
+ordered in the last 24 hours are skipped automatically. More than five pages
+require confirm_large_order=true, and you may only set it after the user has
+confirmed the number of pages and the cost in the conversation, never on your
+own. Results arrive test type by test type over 15 to 30 minutes; read them with
+get_private_test_result, which says how many test types are done.
+
+Nothing here changes settings or deletes anything.
 """
 
 
@@ -311,8 +321,11 @@ def _request(
     params: dict[str, Any] | None = None,
     headers: dict[str, str] | None = None,
     cache: bool = True,
+    data: dict[str, str] | None = None,
 ) -> Any:
     """Make an HTTP call and translate failures into friendly messages.
+
+    `data` is sent as a form body (the legacy order endpoints read request.form).
 
     GET responses are cached in-process for CACHE_TTL seconds, keyed on the
     full request, so a follow-up question about the same site does not hit
@@ -334,7 +347,7 @@ def _request(
             return hit[1]
 
     try:
-        resp = _http().request(method, url, headers=hdrs, params=params)
+        resp = _http().request(method, url, headers=hdrs, params=params, data=data)
     except httpx.TimeoutException as exc:
         raise WebperfError(
             f"Timed out after {HTTP_TIMEOUT:.0f}s waiting for {API_BASE}.", kind="unreachable"
@@ -1101,8 +1114,171 @@ def order_retest(site_id: int, test_numbers: list[int]) -> dict:
     }
 
 
+PRIVATE_TEST_CREDITS = 15          # per page, same as /privata-tester/ in Webperf Cloud
+PRIVATE_TEST_MAX_PER_ORDER = 10    # the API's own cap per call
+PRIVATE_TEST_CONFIRM_ABOVE = 5     # more pages than this need confirm_large_order
+PRIVATE_TEST_DEDUP_HOURS = 24
+
+
+def _normalise_page_url(url: str) -> str:
+    """Compare pages loosely: scheme and host lowercased, no fragment, no
+    trailing slash. http and https count as the same page."""
+    from urllib.parse import urlsplit, urlunsplit
+
+    parts = urlsplit(url.strip())
+    path = parts.path.rstrip("/")
+    return urlunsplit(("https", parts.netloc.lower(), path, parts.query, ""))
+
+
+def _parse_api_timestamp(value: Any):
+    """The legacy API writes '2026-10-12 23:24:32+02:00'."""
+    from datetime import datetime
+
+    try:
+        return datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def order_private_test(site_id: int, urls: list[str], confirm_large_order: bool = False) -> dict:
+    """Run the whole test suite on individual pages of the user's site.
+
+    Costs 15 credits per page, so state the cost before calling. Pages must
+    be on the site's own domain, at most 10 per call. Pages ordered in the
+    last 24 hours are skipped and not charged. More than 5 new pages require
+    confirm_large_order=true, which you may set only after the user confirmed
+    the page count and cost in the conversation. Results arrive over 15 to
+    30 minutes; read them with get_private_test_result.
+
+    Args:
+        site_id: Numeric id of the site (from list_my_sites).
+        urls: Full page addresses on the site's domain, e.g.
+            ["https://www.example.se/kontakt"].
+        confirm_large_order: Set true only after the user confirmed an order
+            of more than 5 pages.
+    """
+    from datetime import datetime, timedelta, timezone
+    from urllib.parse import urlsplit
+
+    sid = _site_id(site_id)
+    wanted = list(dict.fromkeys(
+        u.strip() for u in (urls or []) if isinstance(u, str) and u.strip()
+    ))
+    if not wanted:
+        raise WebperfError("urls is required: give the full addresses of the pages to test.",
+                           kind="bad_request")
+    if len(wanted) > PRIVATE_TEST_MAX_PER_ORDER:
+        raise WebperfError(
+            f"At most {PRIVATE_TEST_MAX_PER_ORDER} pages per order (you gave {len(wanted)}). "
+            "Nothing was ordered.",
+            kind="bad_request",
+        )
+
+    site = _request("GET", f"/item/{sid}").get("data") or {}
+    site_host = urlsplit(str(site.get("url") or "")).netloc.lower()
+    if not site_host:
+        raise WebperfError(f"Could not read the address of site {sid}.", kind="invalid_response")
+    off_domain = [
+        u for u in wanted
+        if urlsplit(u).scheme not in ("http", "https") or urlsplit(u).netloc.lower() != site_host
+    ]
+    if off_domain:
+        raise WebperfError(
+            f"These pages are not on {site_host}: {off_domain}. Private tests must be on the "
+            "site's own domain, written exactly as the site is registered. Nothing was ordered.",
+            kind="bad_request",
+        )
+
+    # Dedup against pages ordered recently, so a repeated request does not
+    # cost another 15 credits per page.
+    recent: dict[str, dict] = {}
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=PRIVATE_TEST_DEDUP_HOURS)
+    listing = _request("GET", f"/0.1/private_stats/{sid}", cache=False)
+    for t in listing.get("data", []) or []:
+        when = _parse_api_timestamp(t.get("date_added"))
+        if when is None or when.tzinfo is None or when < cutoff:
+            continue
+        uri = str(t.get("uri") or "").rstrip("/").rsplit("/", 1)[-1]
+        recent[_normalise_page_url(str(t.get("url") or ""))] = {
+            "url": t.get("url"),
+            "date_added": t.get("date_added"),
+            "private_test_id": int(uri) if uri.isdigit() else None,
+        }
+    skipped = [recent[_normalise_page_url(u)] for u in wanted if _normalise_page_url(u) in recent]
+    to_order = [u for u in wanted if _normalise_page_url(u) not in recent]
+
+    quota = _request("GET", "/0.1/quota/", headers=_site_headers(sid), cache=False)
+    available = quota.get("available")
+    cost = PRIVATE_TEST_CREDITS * len(to_order)
+
+    if not to_order:
+        return {
+            "site_id": sid,
+            "ordered": [],
+            "skipped_recent": skipped,
+            "credits_charged": 0,
+            "credits_remaining": available,
+            "message": (
+                f"All {len(skipped)} page(s) were already ordered in the last "
+                f"{PRIVATE_TEST_DEDUP_HOURS} hours. Nothing was charged; read them with "
+                "get_private_test_result."
+            ),
+        }
+
+    if isinstance(available, int) and cost > available:
+        raise WebperfError(
+            f"Not enough credits: {len(to_order)} page(s) cost {cost} but {available} remain "
+            "for the current 30-day period. Nothing was ordered.",
+            kind="bad_request",
+        )
+
+    if len(to_order) > PRIVATE_TEST_CONFIRM_ABOVE and not confirm_large_order:
+        return {
+            "site_id": sid,
+            "needs_confirmation": True,
+            "ordered": [],
+            "pages": to_order,
+            "skipped_recent": skipped,
+            "cost": cost,
+            "credits_available": available,
+            "message": (
+                f"This would test {len(to_order)} pages for {cost} credits"
+                + (f", leaving {available - cost}." if isinstance(available, int) else ".")
+                + " Nothing was ordered. Ask the user to confirm the page count and cost, then "
+                "call again with confirm_large_order=true."
+            ),
+        }
+
+    # The API splits on ", " (comma + space).
+    data = _request("POST", "/0.1/test_once/", headers=_site_headers(sid), cache=False,
+                    data={"urls": ", ".join(to_order)})
+    endpoints = data.get("endpoints") or {}
+    ids = sorted(int(k) for k in endpoints if str(k).isdigit())
+    failed = list(data.get("failed") or [])
+    created_urls = [u for u in to_order if u not in failed]
+    ordered = [
+        {"private_test_id": pid, "url": created_urls[i] if i < len(created_urls) else None}
+        for i, pid in enumerate(ids)
+    ]
+    charged = PRIVATE_TEST_CREDITS * len(ids)
+    _cache.clear()  # list_private_tests must see the new pages at once
+    return {
+        "site_id": sid,
+        "ordered": ordered,
+        "skipped_recent": skipped,
+        "failed": failed,
+        "credits_charged": charged,
+        "credits_remaining": (available - charged) if isinstance(available, int) else None,
+        "next_step": (
+            "Call get_private_test_result(site_id, private_test_id) to read results; they "
+            "arrive test type by test type over 15 to 30 minutes. Poll at most once a minute."
+        ),
+    }
+
+
 if ORDERING_ENABLED:
     mcp.tool(annotations=ORDERING)(order_retest)
+    mcp.tool(annotations=ORDERING)(order_private_test)
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -1175,12 +1351,61 @@ def get_private_test_result(site_id: int, private_test_id: int) -> dict:
         }
         for t in data.get("data", []) or []
     ]
+    # A one-off page gets the whole suite, one test type at a time, so progress
+    # is "types with a result" against the types the fleet runs. Public-sector-
+    # only types are left out of the expectation since most pages never get them.
+    retestable, public_only = _catalogue_flags()
+    expected = sorted(retestable - public_only)
+    done_types = {int(r["type_of_test"]) for r in results if r.get("type_of_test") is not None}
+    pending = [t for t in expected if t not in done_types]
     return {
         "site_id": sid,
         "private_test_id": tid,
         "result_count": len(results),
+        "tests_done": len(done_types),
+        "tests_expected": len(expected),
+        "pending_types": pending,
+        "complete": not pending,
         "results": results,
     }
+
+
+@mcp.tool(annotations=READ_ONLY)
+def get_private_raw_check_data(site_id: int, private_test_id: int, type_of_test: int) -> dict:
+    """Get the raw underlying audit data for ONE test type of a private test.
+
+    Only call this when the user explicitly asks for the raw/detailed machine
+    data; it can be hundreds of KB. get_private_test_result is the right tool
+    for scores and reports. Needs api.webperf.se 1.2.1 or later.
+
+    Args:
+        site_id: Numeric id of the site (from list_my_sites).
+        private_test_id: Id from list_private_tests or order_private_test.
+        type_of_test: Numeric test type (see list_test_types).
+    """
+    sid = _site_id(site_id)
+    tid = _site_id(private_test_id)
+    want = str(int(type_of_test))
+    data = _request(
+        "GET",
+        f"/0.1/private_stats/{sid}/{tid}",
+        params={"type_of_test": want, "include_raw_data": "true"},
+    )
+    for t in data.get("data", []) or []:
+        if str(t.get("type_of_test")) != want:
+            continue
+        return {
+            "site_id": sid,
+            "private_test_id": tid,
+            "type_of_test": int(want),
+            "test_date": t.get("test_date"),
+            "raw_check_data": _parse_check_data(t.get("json_check_data")) or None,
+        }
+    raise WebperfError(
+        f"No result of type {want} for private test {tid} yet. "
+        "Use get_private_test_result to see which test types are done.",
+        kind="not_found",
+    )
 
 
 @mcp.tool(annotations=READ_ONLY)

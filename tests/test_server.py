@@ -467,6 +467,144 @@ def test_order_retest_is_not_registered_by_default():
     assert "order_retest" not in {t.name for t in server.mcp._tool_manager.list_tools()}
 
 
+def _private_api(seen, available=100, recent_url="https://www.example.se/gammal", recent_hours=1):
+    from datetime import datetime, timedelta, timezone
+
+    tz = timezone(timedelta(hours=2))
+    stamp = "%Y-%m-%d %H:%M:%S+02:00"
+    recent_at = (datetime.now(tz) - timedelta(hours=recent_hours)).strftime(stamp)
+    old_at = (datetime.now(tz) - timedelta(days=3)).strftime(stamp)
+
+    def handler(request):
+        path = request.url.path
+        if path == "/item/3843":
+            return json_response(200, {"data": {"url": "https://www.example.se/", "title": "Ex"}})
+        if path == "/0.1/private_stats/3843":
+            return json_response(200, {"data": [
+                {"uri": "https://api.webperf.se/0.1/private_stats/3843/900", "url": recent_url,
+                 "date_added": recent_at},
+                {"uri": "https://api.webperf.se/0.1/private_stats/3843/800",
+                 "url": "https://www.example.se/aldre", "date_added": old_at},
+            ]})
+        if path == "/0.1/quota/":
+            return json_response(200, {"monthly_quota": 500, "used": 500 - available,
+                                       "available": available, "period_days": 30})
+        if path == "/v1/tests":
+            return json_response(200, _catalogue())
+        if path == "/0.1/test_once/" and request.method == "POST":
+            seen["headers"] = dict(request.headers)
+            seen["body"] = request.content.decode()
+            n = seen["body"].count("%2C+") + 1 if seen["body"] else 0
+            return json_response(200, {"message": "ok", "endpoints": {
+                str(1000 + i): f"https://api.webperf.se/private_stats/3843/{1000 + i}"
+                for i in range(n)}})
+        raise AssertionError(f"unexpected {request.method} {path}")
+    return handler
+
+
+def test_order_private_test_posts_new_pages_and_skips_recent(monkeypatch):
+    monkeypatch.setenv("WEBPERF_API_KEY", "abcdefghij1234567890")
+    seen = {}
+    install(_private_api(seen))
+    out = server.order_private_test(3843, [
+        "https://www.example.se/kontakt", "https://www.example.se/gammal/",
+        "https://www.example.se/aldre"])
+    assert seen["headers"]["site-id"] == "3843"
+    expected_body = (
+        "urls=https%3A%2F%2Fwww.example.se%2Fkontakt%2C+https%3A%2F%2Fwww.example.se%2Faldre"
+    )
+    assert expected_body in seen["body"]
+    assert [o["url"] for o in out["ordered"]] == [
+        "https://www.example.se/kontakt", "https://www.example.se/aldre"]
+    assert [o["private_test_id"] for o in out["ordered"]] == [1000, 1001]
+    assert out["skipped_recent"][0]["private_test_id"] == 900
+    assert (out["credits_charged"], out["credits_remaining"]) == (30, 70)
+
+
+def test_order_private_test_everything_recent_charges_nothing(monkeypatch):
+    monkeypatch.setenv("WEBPERF_API_KEY", "abcdefghij1234567890")
+    seen = {}
+    install(_private_api(seen))
+    out = server.order_private_test(3843, ["http://www.example.se/gammal"])
+    assert out["ordered"] == [] and out["credits_charged"] == 0
+    assert "body" not in seen
+
+
+def test_order_private_test_refuses_other_domains_before_posting(monkeypatch):
+    monkeypatch.setenv("WEBPERF_API_KEY", "abcdefghij1234567890")
+    seen = {}
+    install(_private_api(seen))
+    with pytest.raises(server.WebperfError) as exc:
+        server.order_private_test(3843, ["https://www.example.se/ok", "https://example.se/annan"])
+    assert "example.se/annan" in str(exc.value)
+    assert "body" not in seen
+
+
+def test_order_private_test_caps_at_ten(monkeypatch):
+    monkeypatch.setenv("WEBPERF_API_KEY", "abcdefghij1234567890")
+    install(_private_api({}))
+    with pytest.raises(server.WebperfError):
+        server.order_private_test(3843, [f"https://www.example.se/s{i}" for i in range(11)])
+
+
+def test_order_private_test_needs_confirmation_above_five(monkeypatch):
+    monkeypatch.setenv("WEBPERF_API_KEY", "abcdefghij1234567890")
+    seen = {}
+    install(_private_api(seen, available=200))
+    pages = [f"https://www.example.se/s{i}" for i in range(6)]
+    out = server.order_private_test(3843, pages)
+    assert out["needs_confirmation"] is True and out["cost"] == 90 and out["ordered"] == []
+    assert "body" not in seen
+    out = server.order_private_test(3843, pages, confirm_large_order=True)
+    assert len(out["ordered"]) == 6 and out["credits_charged"] == 90
+
+
+def test_order_private_test_refuses_when_credits_are_short(monkeypatch):
+    monkeypatch.setenv("WEBPERF_API_KEY", "abcdefghij1234567890")
+    seen = {}
+    install(_private_api(seen, available=20))
+    with pytest.raises(server.WebperfError) as exc:
+        server.order_private_test(3843, ["https://www.example.se/a", "https://www.example.se/b"])
+    assert "Not enough credits" in str(exc.value)
+    assert "body" not in seen
+
+
+def test_private_result_reports_progress(monkeypatch):
+    def handler(request):
+        if request.url.path == "/v1/tests":
+            return json_response(200, _catalogue())
+        return json_response(200, {"data": [
+            {"test_date": "x", "type_of_test": 2, "rating": 4.0, "check_report": "r"},
+            {"test_date": "x", "type_of_test": 21, "rating": 3.5, "check_report": "r"},
+        ]})
+
+    install(handler)
+    out = server.get_private_test_result(3843, 1000)
+    assert (out["tests_done"], out["tests_expected"], out["complete"]) == (2, 2, True)
+    assert out["pending_types"] == []
+
+
+def test_private_raw_data_requests_the_flag_and_parses(monkeypatch):
+    seen = {}
+
+    def handler(request):
+        seen["params"] = dict(request.url.params)
+        return json_response(200, {"data": [
+            {"test_date": "x", "type_of_test": 21, "rating": 3.0, "check_report": "r",
+             "json_check_data": "{\"a\": 1}"}]})
+
+    install(handler)
+    out = server.get_private_raw_check_data(3843, 1000, 21)
+    assert seen["params"] == {"type_of_test": "21", "include_raw_data": "true"}
+    assert out["raw_check_data"] == {"a": 1}
+    with pytest.raises(server.WebperfError):
+        server.get_private_raw_check_data(3843, 1000, 15)
+
+
+def test_order_private_test_is_not_registered_by_default():
+    assert "order_private_test" not in {t.name for t in server.mcp._tool_manager.list_tools()}
+
+
 def test_audit_file_allowlist():
     with pytest.raises(server.WebperfError):
         server.get_audit_file(1, "folder", "summaries.zip")

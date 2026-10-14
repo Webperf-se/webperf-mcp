@@ -36,6 +36,7 @@ EXPECTED_TOOLS = {
     "list_categories",
     "list_private_tests",
     "get_private_test_result",
+    "get_private_raw_check_data",
     "list_audits",
     "get_audit_file",
 }
@@ -121,13 +122,15 @@ def test_ordering_is_opt_in_and_marked_as_a_write():
         })
     )
     names = {t.name for t in tools.tools}
-    assert names == EXPECTED_TOOLS | {"order_retest"}
-    order = next(t for t in tools.tools if t.name == "order_retest")
-    assert order.annotations.read_only_hint is False
-    assert order.annotations.destructive_hint is True
-    assert order.annotations.idempotent_hint is False
+    assert names == EXPECTED_TOOLS | {"order_retest", "order_private_test"}
+    for name in ("order_retest", "order_private_test"):
+        order = next(t for t in tools.tools if t.name == name)
+        assert order.annotations.read_only_hint is False, name
+        assert order.annotations.destructive_hint is True, name
+        assert order.annotations.idempotent_hint is False, name
     for t in tools.tools:
-        if t.name != "order_retest":
+        if t.name not in ("order_retest", "order_private_test"):
             assert t.annotations.read_only_hint is True, t.name
     assert "order_retest" in init.instructions
+    assert "order_private_test" in init.instructions
     assert json.loads(key_check.content[0].text)["ordering_enabled"] is True
