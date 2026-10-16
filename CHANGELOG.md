@@ -4,6 +4,21 @@
 
 ### Added
 
+- Campaign tagging against the organisation's naming convention:
+  `get_campaign_convention`, `build_campaign_url` and `check_campaign_urls`,
+  plus the `setup_campaign_convention` prompt. The tagged URL is built in
+  code, so values outside the convention are refused instead of drifting.
+  Values are lowercase ASCII; aliases map known misspellings; every rewrite is
+  reported. Warns when GA4 would put the medium in Unassigned and when a link
+  points to the site it is placed on. With an API key the convention lives in
+  Webperf Cloud per site (needs api.webperf.se 1.3.0); without one, in the
+  local file named by `WEBPERF_CAMPAIGN_CONVENTION`.
+- `save_campaign_convention` and `add_campaign_value`, opt-in with
+  `WEBPERF_ALLOW_CONVENTION_EDITS=true` ("Allow editing the campaign
+  convention"). Saves in Webperf Cloud carry the revision they were based on,
+  so a colleague's change is never overwritten silently.
+- `check_api_key` reports `convention_edits_enabled`.
+
 - `order_private_test(site_id, urls, confirm_large_order=False)`: run the
   whole suite on individual pages of your own site, 15 credits per page.
   Same opt-in as `order_retest` (`WEBPERF_ALLOW_ORDERING=true`) and the same

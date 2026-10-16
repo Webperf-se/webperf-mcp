@@ -4,7 +4,7 @@
   "display_name": "Webperf",
   "version": "0.5.0",
   "description": "Webperf data in Claude: open public-sector ratings without a key, your own sites and test results with one. Read-only unless you turn on ordering.",
-  "long_description": "Ask about website quality in plain language.\n\nWithout an API key you get Webperf's open data: every Swedish municipality and region with its accessibility, performance, standards and security ratings, site search, aggregate statistics and the test-type catalogue.\n\nWith a Webperf Cloud API key (Standard or Agency) you also get read-only access to your own sites: latest results and readable reports, monthly history, raw audit data, quota, private tests and audits.\n\nThe server runs locally on your machine and is a thin client over the public Webperf HTTP API. It adds no privileges of its own: every keyed request carries your personal API key, and all authorization stays server-side at api.webperf.se. It can never show data your key could not already fetch directly.\n\nBy default it exposes only listing and reading. Turn on \"Allow ordering tests\" in the extension settings to add order_retest, which queues new tests for your own sites and spends credits from your quota. Claude Desktop asks you before each order.",
+  "long_description": "Ask about website quality in plain language.\n\nWithout an API key you get Webperf's open data: every Swedish municipality and region with its accessibility, performance, standards and security ratings, site search, aggregate statistics and the test-type catalogue.\n\nWith a Webperf Cloud API key (Standard or Agency) you also get read-only access to your own sites: latest results and readable reports, monthly history, raw audit data, quota, private tests and audits.\n\nThe server runs locally on your machine and is a thin client over the public Webperf HTTP API. It adds no privileges of its own: every keyed request carries your personal API key, and all authorization stays server-side at api.webperf.se. It can never show data your key could not already fetch directly.\n\nBy default it exposes only listing and reading. Turn on \"Allow ordering tests\" in the extension settings to add order_retest, which queues new tests for your own sites and spends credits from your quota. Claude Desktop asks you before each order.\n\nCampaign tagging tools build UTM/MTM-tagged URLs that follow your organisation's naming convention, stored in Webperf Cloud with a key or in a local file without one. Saving the convention is a separate opt-in setting.",
   "author": {
     "name": "Webperf",
     "email": "support@webperf.se",
@@ -45,7 +45,9 @@
       "env": {
         "WEBPERF_API_KEY": "${user_config.api_key}",
         "WEBPERF_API_BASE": "${user_config.api_base}",
-        "WEBPERF_ALLOW_ORDERING": "${user_config.allow_ordering}"
+        "WEBPERF_ALLOW_ORDERING": "${user_config.allow_ordering}",
+        "WEBPERF_ALLOW_CONVENTION_EDITS": "${user_config.allow_convention_edits}",
+        "WEBPERF_CAMPAIGN_CONVENTION": "${user_config.campaign_convention_file}"
       }
     }
   },
@@ -62,6 +64,19 @@
       "title": "Allow ordering tests",
       "description": "Adds order_retest and order_private_test, which queue new tests for your own sites and spend credits from your quota (1 per retest, 15 per private page). Needs an API key. Off, the server is strictly read-only.",
       "default": false,
+      "required": false
+    },
+    "allow_convention_edits": {
+      "type": "boolean",
+      "title": "Allow editing the campaign convention",
+      "description": "Adds save_campaign_convention and add_campaign_value, which change the naming convention for campaign tagging. With an API key the convention is shared by everyone with access to the site.",
+      "default": false,
+      "required": false
+    },
+    "campaign_convention_file": {
+      "type": "string",
+      "title": "Local campaign convention file (optional)",
+      "description": "Path to a JSON file with your campaign tagging convention, for use without an API key. With a key, the convention is stored in Webperf Cloud instead.",
       "required": false
     },
     "api_base": {
@@ -160,6 +175,26 @@
     {
       "name": "order_private_test",
       "description": "Run the whole suite on individual pages of your site (15 credits per page). Only present when \"Allow ordering tests\" is on."
+    },
+    {
+      "name": "get_campaign_convention",
+      "description": "Your naming convention for campaign (UTM/MTM) tagging, from Webperf Cloud or a local file"
+    },
+    {
+      "name": "build_campaign_url",
+      "description": "Tag a URL with campaign parameters that follow your convention"
+    },
+    {
+      "name": "check_campaign_urls",
+      "description": "Audit tagged URLs against your convention and suggest fixes"
+    },
+    {
+      "name": "save_campaign_convention",
+      "description": "Save the whole campaign convention. Only present when \"Allow editing the campaign convention\" is on."
+    },
+    {
+      "name": "add_campaign_value",
+      "description": "Add one allowed value to the campaign convention. Only present when \"Allow editing the campaign convention\" is on."
     }
   ],
   "compatibility": {
