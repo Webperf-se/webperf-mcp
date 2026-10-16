@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0 (unreleased)
+## 0.5.1 (2026-10-16)
 
 ### Added
 
@@ -18,6 +18,10 @@
   convention"). Saves in Webperf Cloud carry the revision they were based on,
   so a colleague's change is never overwritten silently.
 - `check_api_key` reports `convention_edits_enabled`.
+
+## 0.5.0 (2026-10-14)
+
+### Added
 
 - `order_private_test(site_id, urls, confirm_large_order=False)`: run the
   whole suite on individual pages of your own site, 15 credits per page.
