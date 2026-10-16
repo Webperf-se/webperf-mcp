@@ -37,6 +37,7 @@ from mcp.types import ToolAnnotations
 # so make the package importable for the version constant either way.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from webperf_mcp import __version__  # noqa: E402
+from webperf_mcp import campaign as tagging  # noqa: E402
 
 DEFAULT_API_BASE = "https://api.webperf.se"
 TRUSTED_HOST_SUFFIXES = (".webperf.se", ".webperf.cloud")
@@ -84,6 +85,26 @@ def _bool_env(name: str, env: dict[str, str] | None = None) -> bool:
 # is strictly read-only and order_retest is not registered at all.
 ORDERING_ENABLED = _bool_env("WEBPERF_ALLOW_ORDERING")
 
+# Saving the campaign convention is a separate opt-in. It spends nothing, but
+# it changes what everyone in the organisation is allowed to tag with.
+CONVENTION_EDITS_ENABLED = _bool_env("WEBPERF_ALLOW_CONVENTION_EDITS")
+
+# save_campaign_convention replaces the whole convention: clients should ask.
+CONVENTION_REPLACE = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=True,
+    idempotentHint=True,
+    openWorldHint=True,
+)
+
+# add_campaign_value only adds to it.
+CONVENTION_ADD = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=True,
+)
+
 INSTRUCTIONS = """\
 Read-only access to api.webperf.se, the Swedish website-quality service.
 
@@ -100,13 +121,31 @@ get_raw_check_data when the user explicitly wants the raw machine data behind a
 score; it is large. The same goes for get_private_raw_check_data.
 
 Ratings are on a 1-5 scale where 5 is best. -1 means not rated.
+
+Campaign tagging (UTM/MTM): never write a tagged URL yourself. Use
+build_campaign_url, which only accepts values from the organisation's naming
+convention and reports every value it rewrote; pass those notes on. When a
+value is rejected, offer the suggested or allowed values. Adding a new value
+to the convention is the user's decision, not yours. check_campaign_urls
+audits links people already use. With an API key the convention lives in
+Webperf Cloud per site (pass site_id); without one, in the local JSON file
+named by WEBPERF_CAMPAIGN_CONVENTION. If no convention exists yet, follow the
+setup_campaign_convention prompt with the user before tagging anything.
 """
 
-INSTRUCTIONS_READ_ONLY = INSTRUCTIONS + """\
-Nothing here can start a test, change a setting or delete anything.
+CONVENTION_EDITS_ON = """\
+Editing the campaign convention is enabled. save_campaign_convention replaces
+the whole convention and add_campaign_value adds one value. Only call them
+after the user has agreed to the exact change in the conversation.
 """
 
-INSTRUCTIONS_ORDERING = INSTRUCTIONS + """\
+CONVENTION_EDITS_OFF = """\
+Editing the campaign convention is off for this install. To save one, the user
+turns on "Allow editing the campaign convention" in the extension settings
+(WEBPERF_ALLOW_CONVENTION_EDITS=true).
+"""
+
+INSTRUCTIONS_ORDERING = """\
 Ordering is enabled for this install. order_retest queues new tests for one of
 the user's sites and spends credits (1 per test), so only call it when the user
 explicitly asks for a new test, never to refresh data on your own. Before
@@ -122,9 +161,17 @@ require confirm_large_order=true, and you may only set it after the user has
 confirmed the number of pages and the cost in the conversation, never on your
 own. Results arrive test type by test type over 15 to 30 minutes; read them with
 get_private_test_result, which says how many test types are done.
-
-Nothing here changes settings or deletes anything.
 """
+
+
+def _instructions(ordering: bool, edits: bool) -> str:
+    text = INSTRUCTIONS + (INSTRUCTIONS_ORDERING if ordering else "")
+    text += CONVENTION_EDITS_ON if edits else CONVENTION_EDITS_OFF
+    if not ordering and not edits:
+        return text + "Nothing here can start a test, change a setting or delete anything.\n"
+    if not ordering:
+        return text + "Nothing here can start a test or delete anything.\n"
+    return text + "Nothing here deletes anything.\n"
 
 
 class WebperfError(Exception):
@@ -261,6 +308,9 @@ def _message_from(resp: httpx.Response) -> str:
     if isinstance(body, dict):
         for field in ("message", "error"):
             if isinstance(body.get(field), str):
+                errors = body.get("errors")
+                if isinstance(errors, list) and errors:
+                    return f"{body[field]}: " + "; ".join(str(e) for e in errors)
                 return body[field]
     return resp.text[:300]
 
@@ -293,6 +343,8 @@ def _translate_status(resp: httpx.Response) -> WebperfError | None:
         return WebperfError(
             f"Not found (404): {msg or 'no such site or resource'}", kind="not_found", status=code
         )
+    if code == 409:
+        return WebperfError(f"Conflict (409): {msg}", kind="conflict", status=code)
     if code == 429:
         retry_after = resp.headers.get("Retry-After")
         limit = resp.headers.get("X-RateLimit-Limit")
@@ -322,10 +374,12 @@ def _request(
     headers: dict[str, str] | None = None,
     cache: bool = True,
     data: dict[str, str] | None = None,
+    json_body: Any = None,
 ) -> Any:
     """Make an HTTP call and translate failures into friendly messages.
 
-    `data` is sent as a form body (the legacy order endpoints read request.form).
+    `data` is sent as a form body (the legacy order endpoints read request.form),
+    `json_body` as JSON (the context endpoints).
 
     GET responses are cached in-process for CACHE_TTL seconds, keyed on the
     full request, so a follow-up question about the same site does not hit
@@ -347,7 +401,7 @@ def _request(
             return hit[1]
 
     try:
-        resp = _http().request(method, url, headers=hdrs, params=params, data=data)
+        resp = _http().request(method, url, headers=hdrs, params=params, data=data, json=json_body)
     except httpx.TimeoutException as exc:
         raise WebperfError(
             f"Timed out after {HTTP_TIMEOUT:.0f}s waiting for {API_BASE}.", kind="unreachable"
@@ -468,9 +522,7 @@ def _audit_folder(content: Any) -> str | None:
     return name or None
 
 
-mcp = MCPServer(
-    "webperf", instructions=INSTRUCTIONS_ORDERING if ORDERING_ENABLED else INSTRUCTIONS_READ_ONLY
-)
+mcp = MCPServer("webperf", instructions=_instructions(ORDERING_ENABLED, CONVENTION_EDITS_ENABLED))
 
 
 # ---------------------------------------------------------------------------
@@ -653,14 +705,17 @@ def check_api_key() -> dict:
     Safe to call any time: one cheap request, no credits used, and the key
     itself is never included in the result. Returns a status of ok,
     no_sites, no_key_configured, bad_format, rejected, rate_limited,
-    unreachable or misconfigured, plus a plain-language next_step, and
-    ordering_enabled, which says whether this install may order tests.
+    unreachable or misconfigured, plus a plain-language next_step,
+    ordering_enabled, which says whether this install may order tests, and
+    convention_edits_enabled, which says whether it may save the campaign
+    convention.
 
     Call this first when a keyed tool fails, or when the user asks whether
     their key is set up correctly.
     """
     result = _check_api_key()
     result["ordering_enabled"] = ORDERING_ENABLED
+    result["convention_edits_enabled"] = CONVENTION_EDITS_ENABLED
     return result
 
 
@@ -1465,6 +1520,413 @@ def get_audit_file(site_id: int, folder: str, file: str) -> dict:
         params={"folder": folder, "file": file},
     )
     return {"site_id": sid, "folder": folder, "file": file, "content": data}
+
+
+# ---------------------------------------------------------------------------
+# Campaign tagging
+# ---------------------------------------------------------------------------
+
+CONTEXT_PATH = "/0.1/context/campaign_convention"
+MAX_URLS_TO_CHECK = 50
+
+
+def _convention_path() -> Path | None:
+    raw = os.environ.get("WEBPERF_CAMPAIGN_CONVENTION", "").strip()
+    return Path(raw).expanduser() if raw else None
+
+
+def _has_key() -> bool:
+    return bool(os.environ.get("WEBPERF_API_KEY", "").strip())
+
+
+def _load_convention(site_id: int | None) -> dict:
+    """Where the convention lives and what it says.
+
+    With site_id the cloud copy wins, even if a local file is configured: a
+    silent fallback to a stale local copy would defeat the point of sharing
+    one. Without site_id, the local file. A key without site_id and without a
+    local file is an error, since the user has a cloud convention we cannot
+    pick a site for.
+    """
+    path = _convention_path()
+    if site_id is not None:
+        sid = _site_id(site_id)
+        data = _request("GET", CONTEXT_PATH, headers=_site_headers(sid), cache=False)
+        notes = []
+        if path:
+            notes.append(f"Using the convention in Webperf Cloud; the local file {path} is "
+                         "ignored when site_id is given.")
+        return {
+            "stored_in": "webperf_cloud",
+            "site_id": data.get("site_id", sid),
+            "revision": int(data.get("revision") or 0),
+            "convention": data.get("value"),
+            "date_modified": data.get("date_modified"),
+            "modified_by": data.get("modified_by"),
+            "notes": notes,
+        }
+    if path:
+        if not path.exists():
+            return {"stored_in": "local_file", "path": str(path), "convention": None, "notes": [
+                f"{path} does not exist yet; saving creates it."]}
+        try:
+            conv = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise WebperfError(f"Could not read {path}: {exc}", kind="config") from None
+        errors = tagging.validate_convention(conv)
+        if errors:
+            raise WebperfError(f"The convention in {path} is not valid: " + "; ".join(errors),
+                               kind="config")
+        notes = []
+        if _has_key():
+            notes.append("Pass site_id to use your organisation's convention in Webperf Cloud "
+                         "instead of this local file.")
+        return {"stored_in": "local_file", "path": str(path), "convention": conv, "notes": notes}
+    if _has_key():
+        raise WebperfError(
+            "Pass site_id (from list_my_sites) to use the campaign convention stored for that "
+            "site in Webperf Cloud, or set WEBPERF_CAMPAIGN_CONVENTION to a local JSON file.",
+            kind="bad_request",
+        )
+    return {"stored_in": None, "convention": None, "notes": [
+        "No convention is configured. Without an API key it lives in a local JSON file: set "
+        "WEBPERF_CAMPAIGN_CONVENTION to its path in the MCP client config."]}
+
+
+def _require_convention(site_id: int | None) -> dict:
+    loaded = _load_convention(site_id)
+    if loaded["convention"] is None:
+        raise WebperfError(
+            "No campaign convention is saved yet, so there is nothing to tag against. Call "
+            "get_campaign_convention for a starter and set one up with the user first.",
+            kind="not_found",
+        )
+    return loaded
+
+
+def _save_convention(conv: dict, site_id: int | None, base_revision: int | None) -> dict:
+    errors = tagging.validate_convention(conv)
+    if errors:
+        raise WebperfError("The convention is not valid: " + "; ".join(errors), kind="bad_request")
+    if site_id is not None:
+        sid = _site_id(site_id)
+        if base_revision is None or int(base_revision) < 0:
+            raise WebperfError(
+                "base_revision is required: call get_campaign_convention first and pass its "
+                "revision (0 when nothing is saved).",
+                kind="bad_request",
+            )
+        try:
+            data = _request("PUT", CONTEXT_PATH, headers=_site_headers(sid), cache=False,
+                            json_body={"value": conv, "base_revision": int(base_revision)})
+        except WebperfError as exc:
+            if exc.kind == "conflict":
+                raise WebperfError(
+                    f"Someone saved the convention after revision {base_revision}. Call "
+                    "get_campaign_convention, apply the user's change to the current version "
+                    "and save again.",
+                    kind="conflict",
+                    status=409,
+                ) from None
+            raise
+        return {"saved": True, "stored_in": "webperf_cloud", "site_id": data.get("site_id", sid),
+                "revision": data.get("revision")}
+    path = _convention_path()
+    if path is None:
+        raise WebperfError(
+            "Pass site_id to save in Webperf Cloud, or set WEBPERF_CAMPAIGN_CONVENTION to a "
+            "local JSON file." if _has_key() else
+            "Set WEBPERF_CAMPAIGN_CONVENTION to the path of a local JSON file to save the "
+            "convention in.",
+            kind="config",
+        )
+    if not path.parent.is_dir():
+        raise WebperfError(f"The folder {path.parent} does not exist.", kind="config")
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(conv, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+    return {"saved": True, "stored_in": "local_file", "path": str(path)}
+
+
+@mcp.tool(annotations=READ_ONLY)
+def get_campaign_convention(site_id: int | None = None) -> dict:
+    """The organisation's naming convention for campaign (UTM/MTM) tagging.
+
+    With an API key, pass site_id to read the convention stored for that site
+    in Webperf Cloud; everyone with access to the site shares it. Without a
+    key it is read from the local file in WEBPERF_CAMPAIGN_CONVENTION.
+
+    When nothing is saved yet, the result has convention null and a starter
+    to set one up from with the user. Keep revision: saving needs it.
+
+    Args:
+        site_id: Numeric id of one of the user's sites, from list_my_sites.
+    """
+    loaded = _load_convention(site_id)
+    loaded["editing_enabled"] = CONVENTION_EDITS_ENABLED
+    if loaded["convention"] is None:
+        loaded["starter"] = tagging.STARTER_CONVENTION
+        loaded["next_step"] = (
+            "No convention is saved yet. Go through the setup_campaign_convention questions "
+            "with the user, starting from the starter, and save the result with "
+            "save_campaign_convention once they agree."
+            if CONVENTION_EDITS_ENABLED else
+            "No convention is saved yet. Saving one needs \"Allow editing the campaign "
+            "convention\" turned on in the extension settings (WEBPERF_ALLOW_CONVENTION_EDITS)."
+        )
+    return loaded
+
+
+@mcp.tool(annotations=READ_ONLY)
+def build_campaign_url(
+    url: str,
+    source: str,
+    medium: str,
+    campaign: str,
+    content: str | None = None,
+    term: str | None = None,
+    site_id: int | None = None,
+    placement_url: str | None = None,
+) -> dict:
+    """Tag a URL with campaign parameters that follow the organisation's convention.
+
+    Always use this instead of writing a tagged URL yourself. Values are
+    matched against the convention: known misspellings are mapped (FB ->
+    facebook), letters are folded to lowercase ASCII (höst -> host), and
+    values the convention does not allow are refused with the closest allowed
+    ones. Every rewrite is listed in changes; tell the user about them.
+    Existing utm_/mtm_ tags on the URL are replaced, not duplicated.
+
+    Returns ok true with the tagged url, or ok false with errors and
+    suggestions. On ok false, ask the user to choose; do not pick for them
+    and do not add values to the convention unless they ask.
+
+    Args:
+        url: The full landing page address.
+        source: Where the link is published, e.g. facebook, nyhetsbrev.
+        medium: The kind of traffic, e.g. social, email, cpc.
+        campaign: The campaign name.
+        content: What tells links in the same campaign apart (placement,
+            variant, format). Leave out when there is only one link.
+        term: Paid search keyword. Only with paid search.
+        site_id: The user's site, to use its convention in Webperf Cloud.
+        placement_url: Where the link will be placed, if known. Used to warn
+            about tagging internal links.
+    """
+    loaded = _require_convention(site_id)
+    conv = loaded["convention"]
+    problem = tagging.check_target(url)
+    if problem:
+        raise WebperfError(problem, kind="bad_request")
+
+    result = tagging.evaluate(conv, {"source": source, "medium": medium, "campaign": campaign,
+                                     "content": content, "term": term})
+    warnings = result["warnings"]
+    if placement_url and tagging.same_site(url, placement_url):
+        warnings.append(
+            "The link is placed on the same site it points to. Tagging internal links starts "
+            "a new session in GA4 and credits the visit to the campaign instead of where the "
+            "visitor came from. Leave internal links untagged."
+        )
+    if result["errors"]:
+        return {
+            "ok": False,
+            "errors": result["errors"],
+            "suggestions": result["suggestions"],
+            "changes": result["changes"],
+            "warnings": warnings,
+            "next_step": "Ask the user to choose one of the suggested or allowed values. Adding "
+                         "a new value to the convention is their decision.",
+        }
+
+    tagged, removed = tagging.tag_url(url, conv["format"], result["values"])
+    changes = result["changes"]
+    if removed:
+        changes.append("replaced existing tags: " + ", ".join(removed))
+    return {
+        "ok": True,
+        "url": tagged,
+        "format": conv["format"],
+        "values": result["values"],
+        "changes": changes,
+        "warnings": warnings,
+        "convention_from": loaded["stored_in"],
+    }
+
+
+@mcp.tool(annotations=READ_ONLY)
+def check_campaign_urls(urls: list[str], site_id: int | None = None) -> dict:
+    """Audit already tagged URLs against the organisation's convention.
+
+    Each URL gets a status: compliant; fixable (every value maps onto the
+    convention, and fixed_url is the corrected link); non_compliant (some
+    value has no match, see issues and suggestions); untagged; or invalid.
+    Up to 50 URLs per call.
+
+    Args:
+        urls: Tagged URLs, e.g. a column pasted from a campaign spreadsheet.
+        site_id: The user's site, to use its convention in Webperf Cloud.
+    """
+    if not urls:
+        raise WebperfError("Give at least one URL.", kind="bad_request")
+    if len(urls) > MAX_URLS_TO_CHECK:
+        raise WebperfError(f"At most {MAX_URLS_TO_CHECK} URLs per call.", kind="bad_request")
+    loaded = _require_convention(site_id)
+    conv = loaded["convention"]
+    expected = conv["format"]
+
+    results = []
+    for url in urls:
+        problem = tagging.check_target(url)
+        if problem:
+            results.append({"url": url, "status": "invalid", "issues": [problem]})
+            continue
+        fmt, values, problems = tagging.read_tags(url)
+        if not values:
+            results.append({"url": url, "status": "untagged"})
+            continue
+        result = tagging.evaluate(conv, values)
+        entry: dict[str, Any] = {"url": url, "values": values, "warnings": result["warnings"]}
+        if result["errors"]:
+            entry.update(status="non_compliant", issues=problems + result["errors"],
+                         suggestions=result["suggestions"])
+        else:
+            changes = list(result["changes"])
+            if fmt != expected:
+                changes.append(f"format: {fmt} -> {expected}")
+            changes += problems
+            fixed, _ = tagging.tag_url(url, expected, result["values"])
+            if changes or fixed != url.strip():
+                entry.update(status="fixable", changes=changes, fixed_url=fixed)
+            else:
+                entry["status"] = "compliant"
+        results.append(entry)
+
+    counts: dict[str, int] = {}
+    for r in results:
+        counts[r["status"]] = counts.get(r["status"], 0) + 1
+    return {"convention_from": loaded["stored_in"], "summary": counts, "results": results}
+
+
+def save_campaign_convention(
+    convention: dict, site_id: int | None = None, base_revision: int | None = None
+) -> dict:
+    """Save the whole campaign convention, replacing the current one.
+
+    Only call this after showing the user the complete convention and getting
+    their yes. With site_id it is saved in Webperf Cloud for everyone with
+    access to the site, and base_revision must be the revision from
+    get_campaign_convention (0 when nothing was saved). If a colleague saved
+    in between, this fails with a conflict: read again, reapply the change
+    and save again. Without site_id it is written to the local file.
+
+    Every value must be lowercase ASCII (a-z, 0-9, _ and -). format is utm
+    unless the user only uses Matomo and prefers mtm; utm works in Matomo too.
+
+    Args:
+        convention: The complete convention object.
+        site_id: The user's site, to save in Webperf Cloud.
+        base_revision: The revision the change was based on.
+    """
+    return _save_convention(convention, site_id, base_revision)
+
+
+def add_campaign_value(
+    parameter: str, value: str, site_id: int | None = None, aliases: list[str] | None = None
+) -> dict:
+    """Add one allowed value, and optionally its aliases, to the convention.
+
+    Only when the user has decided the value belongs in the convention, never
+    to make a rejected value pass. The value is folded to lowercase ASCII
+    first, and the result says so. Retries once if a colleague saved at the
+    same time.
+
+    Args:
+        parameter: source, medium, campaign, content or term.
+        value: The new allowed value.
+        site_id: The user's site, to change its convention in Webperf Cloud.
+        aliases: Misspellings or variants that should map to the value.
+    """
+    if parameter not in tagging.PARAMS:
+        raise WebperfError(f"parameter must be one of {', '.join(tagging.PARAMS)}.",
+                           kind="bad_request")
+    for attempt in range(2):
+        loaded = _require_convention(site_id)
+        conv = json.loads(json.dumps(loaded["convention"]))
+        clean = tagging.normalise(value, conv.get("separator", "_"))
+        if not clean:
+            raise WebperfError(f"{value!r} has no usable characters (a-z, 0-9, _ and -).",
+                               kind="bad_request")
+        rules = conv.setdefault(parameter, {})
+        values = rules.setdefault("values", [])
+        known = rules.setdefault("aliases", {})
+        new_aliases = []
+        for alias in aliases or []:
+            if known.get(alias) not in (None, clean):
+                raise WebperfError(f"{alias!r} is already an alias for {known[alias]!r}.",
+                                   kind="bad_request")
+            if alias != clean and alias not in known:
+                known[alias] = clean
+                new_aliases.append(alias)
+        if not known:
+            del rules["aliases"]
+        if clean in values and not new_aliases:
+            return {"added": False, "value": clean, "reason": f"{clean!r} is already allowed."}
+        if clean not in values:
+            values.append(clean)
+        try:
+            saved = _save_convention(conv, site_id, loaded.get("revision"))
+        except WebperfError as exc:
+            if exc.kind == "conflict" and attempt == 0:
+                continue
+            raise
+        saved.update(added=True, parameter=parameter, value=clean, aliases_added=new_aliases)
+        if clean != value:
+            saved["changed_from"] = value
+        return saved
+    raise WebperfError("The convention kept changing; try again.", kind="conflict")
+
+
+if CONVENTION_EDITS_ENABLED:
+    mcp.tool(annotations=CONVENTION_REPLACE)(save_campaign_convention)
+    mcp.tool(annotations=CONVENTION_ADD)(add_campaign_value)
+
+
+@mcp.prompt(
+    name="setup_campaign_convention",
+    title="Set up a campaign tagging convention",
+    description="Agree on the organisation's UTM/MTM naming convention, step by step.",
+)
+def setup_campaign_convention(site_id: str = "") -> str:
+    where = (f"Use site_id {site_id} so it is stored in Webperf Cloud for everyone with access "
+             "to that site." if site_id.strip() else
+             "If I have an API key, ask which of my sites the convention belongs to "
+             "(list_my_sites); otherwise it is saved in the local file.")
+    return f"""\
+Help me set up our naming convention for campaign tagging. {where}
+
+Start with get_campaign_convention. If a convention already exists, show it and
+ask what should change. Otherwise start from the starter it returns. Then ask me
+one question at a time:
+
+1. Do we use Google Analytics 4, Matomo or both? Use UTM tags unless we only use
+   Matomo and want MTM. If we use Matomo, tell me UTM tags are enough for basic
+   tracking: Matomo reads utm_campaign and utm_term out of the box, and the free
+   Marketing Campaigns Reporting plugin reads source, medium and content too.
+2. Where do we actually publish links? Those become the allowed sources.
+3. What kinds of traffic are they? Those become the allowed media. Prefer values
+   GA4 groups on their own (email, social, cpc, display, affiliate, referral);
+   others land in Unassigned in GA4 unless the source is a known site.
+4. What must a campaign name contain, and in which order: an organisation
+   prefix, year, quarter, product? That becomes the campaign template.
+5. Do we run paid search? If so, term is used only with medium cpc.
+6. Which misspellings and variants do people use? Those become aliases.
+
+Every value is lowercase ASCII: a-z, digits, _ and -, so å and ä become a and
+ö becomes o. Keep the lists to what we really use. Show me the complete
+convention before saving, and save it with save_campaign_convention only after
+I say yes.
+"""
 
 
 def main() -> None:

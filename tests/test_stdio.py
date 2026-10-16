@@ -39,6 +39,9 @@ EXPECTED_TOOLS = {
     "get_private_raw_check_data",
     "list_audits",
     "get_audit_file",
+    "get_campaign_convention",
+    "build_campaign_url",
+    "check_campaign_urls",
 }
 
 
@@ -81,7 +84,9 @@ def test_server_boots_and_advertises_read_only_tools():
     assert key_check.is_error is False
     assert body["status"] == "no_key_configured"
     assert body["ordering_enabled"] is False
+    assert body["convention_edits_enabled"] is False
     assert "order_retest" not in init.instructions
+    assert "build_campaign_url" in init.instructions
 
     if live is not None:
         assert live.is_error is False, live.content[0].text
@@ -134,3 +139,41 @@ def test_ordering_is_opt_in_and_marked_as_a_write():
     assert "order_retest" in init.instructions
     assert "order_private_test" in init.instructions
     assert json.loads(key_check.content[0].text)["ordering_enabled"] is True
+
+
+async def _prompts(env_overrides):
+    env = {k: v for k, v in os.environ.items() if not k.startswith("WEBPERF_")}
+    env.update(env_overrides)
+    params = StdioServerParameters(
+        command=sys.executable, args=["-m", "webperf_mcp.server"], env=env
+    )
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            listed = await session.list_prompts()
+            got = await session.get_prompt("setup_campaign_convention", {"site_id": "42"})
+            return listed, got
+
+
+def test_convention_edits_are_opt_in_and_marked_as_writes():
+    init, tools, key_check, _ = run(
+        _session({
+            "WEBPERF_API_KEY": "",
+            "WEBPERF_ALLOW_CONVENTION_EDITS": "true",
+            "WEBPERF_TEST_OFFLINE": "1",
+        })
+    )
+    names = {t.name for t in tools.tools}
+    assert names == EXPECTED_TOOLS | {"save_campaign_convention", "add_campaign_value"}
+    save = next(t for t in tools.tools if t.name == "save_campaign_convention")
+    add = next(t for t in tools.tools if t.name == "add_campaign_value")
+    assert save.annotations.read_only_hint is False and save.annotations.destructive_hint is True
+    assert add.annotations.read_only_hint is False and add.annotations.destructive_hint is False
+    assert "save_campaign_convention" in init.instructions
+    assert json.loads(key_check.content[0].text)["convention_edits_enabled"] is True
+
+
+def test_setup_prompt_is_listed():
+    listed, got = run(_prompts({"WEBPERF_API_KEY": "", "WEBPERF_TEST_OFFLINE": "1"}))
+    assert [p.name for p in listed.prompts] == ["setup_campaign_convention"]
+    assert "site_id 42" in got.messages[0].content.text

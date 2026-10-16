@@ -26,8 +26,11 @@ all authorization stays on the server.
   so clients can treat it that way. The two exceptions, `order_retest` and
   `order_private_test`, exist only when you turn on **Allow ordering tests**
   (`WEBPERF_ALLOW_ORDERING=true`). They are annotated as non-idempotent
-  writes, so Claude Desktop and Claude Code ask before each order. No audit
-  ordering or other mutating endpoints are wired up.
+  writes, so Claude Desktop and Claude Code ask before each order. Saving the
+  campaign tagging convention (`save_campaign_convention`,
+  `add_campaign_value`) is a separate opt-in, **Allow editing the campaign
+  convention** (`WEBPERF_ALLOW_CONVENTION_EDITS=true`), also annotated as
+  writes. No audit ordering or other mutating endpoints are wired up.
 - **Your key stays on your machine.** It is sent only as the `api-key` header
   to the configured API base, which must be `https`. The server never writes
   the key anywhere and never includes it in tool output or error text.
@@ -110,6 +113,38 @@ The API returns at most 30 test rows per site and does not paginate. When a
 response comes back full, `get_latest_results` sets `truncated: true` and says
 so in its `note`, so a partial list is never presented as the whole history.
 Pass `type_of_test` to narrow the query instead.
+
+### Campaign tagging (UTM/MTM)
+
+These tools tag links against your organisation's naming convention, so that
+everyone writes `facebook` and not `fb`, `FB` or `Facebook`. The URL is built
+in code, not by the model: values outside the convention are refused with the
+closest allowed ones, known misspellings are mapped through aliases, and every
+rewrite is reported. Values are lowercase ASCII only (`a-z`, `0-9`, `_`, `-`),
+so `Höstkampanj` becomes `hostkampanj`.
+
+With an API key the convention is stored in Webperf Cloud for a site, and
+everyone with access to that site shares it; pass `site_id`. Without a key it
+lives in a local JSON file named by `WEBPERF_CAMPAIGN_CONVENTION`. When both
+exist and `site_id` is given, the cloud copy wins.
+
+| Tool | What it does | Endpoint |
+| --- | --- | --- |
+| `get_campaign_convention(site_id?)` | The convention and its revision, or a starter when none is saved | `GET /0.1/context/campaign_convention` or the local file |
+| `build_campaign_url(url, source, medium, campaign, content?, term?, site_id?, placement_url?)` | A tagged URL that follows the convention, or the values that do not, with suggestions. Warns when GA4 would put the medium in Unassigned and when a link points to the site it is placed on | none, after reading the convention |
+| `check_campaign_urls(urls, site_id?)` | Audits up to 50 tagged URLs: compliant, fixable (with the corrected URL), non-compliant, untagged or invalid | none, after reading the convention |
+
+The `setup_campaign_convention` prompt walks the user through creating a
+convention: GA4, Matomo or both (UTM by default; Matomo reads UTM tags too),
+the channels they publish in, the campaign name template, paid search and
+common misspellings.
+
+### Convention editing (opt-in, needs `WEBPERF_ALLOW_CONVENTION_EDITS=true`)
+
+| Tool | What it does | Endpoint |
+| --- | --- | --- |
+| `save_campaign_convention(convention, site_id?, base_revision?)` | Replace the whole convention. In Webperf Cloud it needs the revision it was based on and fails with a conflict if a colleague saved in between. Needs an active Webperf Cloud | `PUT /0.1/context/campaign_convention` or the local file |
+| `add_campaign_value(parameter, value, site_id?, aliases?)` | Add one allowed value and its aliases; retries once on a conflict | as above |
 
 ## Install
 
@@ -198,6 +233,8 @@ need them when configuring a client by hand.
 | --- | --- | --- | --- |
 | `WEBPERF_API_KEY` | no | — | Your Webperf Cloud API key. Without it only the open-data tools work |
 | `WEBPERF_ALLOW_ORDERING` | no | `false` | `true` adds `order_retest` and `order_private_test`, which spend credits. Off, the server is strictly read-only |
+| `WEBPERF_ALLOW_CONVENTION_EDITS` | no | `false` | `true` adds `save_campaign_convention` and `add_campaign_value` |
+| `WEBPERF_CAMPAIGN_CONVENTION` | no | — | Path to a local JSON file with the campaign convention, for use without an API key |
 | `WEBPERF_API_BASE` | no | `https://api.webperf.se` | API base URL (e.g. staging). Must be `https` unless localhost |
 | `WEBPERF_HTTP_TIMEOUT` | no | `30` | Per-request timeout in seconds |
 | `WEBPERF_CACHE_TTL` | no | `60` | Seconds to reuse an identical GET response in-process. `0` disables |
