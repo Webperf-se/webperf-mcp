@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "webperf-mcp",
   "display_name": "Webperf",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Webperf data in Claude: open public-sector ratings without a key, your own sites and test results with one. Read-only unless you turn on ordering.",
   "long_description": "Ask about website quality in plain language.\n\nWithout an API key you get Webperf's open data: every Swedish municipality and region with its accessibility, performance, standards and security ratings, site search, aggregate statistics and the test-type catalogue.\n\nWith a Webperf Cloud API key (Standard or Agency) you also get read-only access to your own sites: latest results and readable reports, monthly history, raw audit data, quota, private tests and audits.\n\nThe server runs locally on your machine and is a thin client over the public Webperf HTTP API. It adds no privileges of its own: every keyed request carries your personal API key, and all authorization stays server-side at api.webperf.se. It can never show data your key could not already fetch directly.\n\nBy default it exposes only listing and reading. Turn on \"Allow ordering tests\" in the extension settings to add order_retest, which queues new tests for your own sites and spends credits from your quota. Claude Desktop asks you before each order.\n\nCampaign tagging tools build UTM/MTM-tagged URLs that follow your organisation's naming convention, stored in Webperf Cloud with a key or in a local file without one. Saving the convention is a separate opt-in setting.",
   "author": {
@@ -47,7 +47,8 @@
         "WEBPERF_API_BASE": "${user_config.api_base}",
         "WEBPERF_ALLOW_ORDERING": "${user_config.allow_ordering}",
         "WEBPERF_ALLOW_CONVENTION_EDITS": "${user_config.allow_convention_edits}",
-        "WEBPERF_CAMPAIGN_CONVENTION": "${user_config.campaign_convention_file}"
+        "WEBPERF_CAMPAIGN_CONVENTION": "${user_config.campaign_convention_file}",
+        "WEBPERF_UPDATE_CHECK": "${user_config.update_check}"
       }
     }
   },
@@ -57,6 +58,13 @@
       "title": "API key (optional)",
       "description": "Your personal Webperf Cloud API key, for reading your own sites. Leave empty to use only the open-data tools. Stored in your operating system's keychain and sent only to the Webperf API.",
       "sensitive": true,
+      "required": false
+    },
+    "update_check": {
+      "type": "boolean",
+      "title": "Tell me about new versions",
+      "description": "At startup, asks api.webperf.se (not GitHub) for the latest version, and Claude mentions it once if this one is older. Nothing is installed automatically.",
+      "default": true,
       "required": false
     },
     "allow_ordering": {

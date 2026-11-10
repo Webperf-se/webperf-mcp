@@ -46,6 +46,13 @@ all authorization stays on the server.
   up to `WEBPERF_CACHE_TTL` seconds (60 by default). Cache entries are keyed
   on the API key, so a different key never sees them. Set `WEBPERF_CACHE_TTL=0`
   to disable.
+- **The update check only talks to Webperf.** At startup the server asks
+  `api.webperf.se/info`, without your key, for the latest release, so your
+  computer contacts no third party such as GitHub. If you are behind, the first
+  tool result of the session carries a one-line note so the assistant can tell
+  you, and `check_api_key` shows `server_version`, `latest_version` and
+  `update_available`. Nothing is downloaded or installed. Turn it off with
+  **Tell me about new versions** or `WEBPERF_UPDATE_CHECK=false`.
 
 ### Treat report text as untrusted input
 
@@ -175,14 +182,14 @@ easiest path is [`uvx`](https://docs.astral.sh/uv/), which runs it in an
 isolated environment. Pin a release tag so you get a tested version:
 
 ```bash
-uvx --from git+https://github.com/Webperf-se/webperf-mcp@v0.4.1 webperf-mcp
+uvx --from git+https://github.com/Webperf-se/webperf-mcp@v0.6.1 webperf-mcp
 ```
 
 For Claude Code:
 
 ```bash
 claude mcp add webperf --env WEBPERF_API_KEY=your-key-here \
-  -- uvx --from git+https://github.com/Webperf-se/webperf-mcp@v0.4.1 webperf-mcp
+  -- uvx --from git+https://github.com/Webperf-se/webperf-mcp@v0.6.1 webperf-mcp
 ```
 
 For a client that takes JSON:
@@ -223,6 +230,9 @@ makes one cheap request and reports one of:
 | `unreachable` | Could not reach the API | Check network or proxy |
 | `misconfigured` | `WEBPERF_API_BASE` is invalid or not https | Fix the client config |
 
+The result also has `server_version`, `latest_version` and `update_available`,
+so *which webperf-mcp version am I running?* has a reliable answer.
+
 The key itself is never included in the result, in error messages, or in logs.
 
 ## Configuration
@@ -238,6 +248,7 @@ need them when configuring a client by hand.
 | `WEBPERF_CAMPAIGN_CONVENTION` | no | — | Path to a local JSON file with the campaign convention, for use without an API key |
 | `WEBPERF_API_BASE` | no | `https://api.webperf.se` | API base URL (e.g. staging). Must be `https` unless localhost |
 | `WEBPERF_HTTP_TIMEOUT` | no | `30` | Per-request timeout in seconds |
+| `WEBPERF_UPDATE_CHECK` | no | `true` | `false` stops the startup check for a newer release |
 | `WEBPERF_AUDIT_FILE_MAX_CHARS` | no | `200000` | Largest audit file `get_audit_file` returns without `allow_large` |
 | `WEBPERF_CACHE_TTL` | no | `60` | Seconds to reuse an identical GET response in-process. `0` disables |
 

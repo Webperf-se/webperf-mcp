@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.6.1 (unreleased)
+
+### Added
+
+- Update check. At startup the server asks `api.webperf.se/info` (without the
+  key, never GitHub) for the latest release. If this install is older, the
+  first successful tool result of the session gets a one-line note with the
+  download link, so the assistant can tell the user once. Nothing is installed
+  automatically. Off with **Tell me about new versions** in the extension
+  settings or `WEBPERF_UPDATE_CHECK=false`. Needs api.webperf.se 1.4.1; with an
+  older API the check stays silent.
+- `check_api_key` reports `server_version`, `latest_version`,
+  `update_available` and `update_check_enabled`.
+
+### Fixed
+
+- The server announced an empty version to MCP clients, so an assistant
+  could not tell which release it was talking to. It now sends its version.
+- The `uvx` examples in the README installed 0.4.1.
+
 ## 0.6.0 (2026-11-10)
 
 ### Added
