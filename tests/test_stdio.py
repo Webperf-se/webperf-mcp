@@ -18,6 +18,8 @@ import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from webperf_mcp import __version__
+
 EXPECTED_TOOLS = {
     "list_test_types",
     "list_public_sector_ratings",
@@ -53,6 +55,8 @@ def run(coro):
 async def _session(env_overrides):
     env = {k: v for k, v in os.environ.items() if not k.startswith("WEBPERF_")}
     env.setdefault("WEBPERF_TEST_OFFLINE", os.environ.get("WEBPERF_TEST_OFFLINE", ""))
+    # Keep the subprocess from asking the live API for the latest release.
+    env.setdefault("WEBPERF_UPDATE_CHECK", "false")
     env.update(env_overrides)
     params = StdioServerParameters(
         command=sys.executable, args=["-m", "webperf_mcp.server"], env=env
@@ -72,6 +76,7 @@ def test_server_boots_and_advertises_read_only_tools():
     init, tools, key_check, live = run(_session({"WEBPERF_API_KEY": ""}))
 
     assert init.server_info.name == "webperf"
+    assert init.server_info.version == __version__
     assert init.instructions and "check_api_key" in init.instructions
 
     names = {t.name for t in tools.tools}

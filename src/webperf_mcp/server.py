@@ -24,6 +24,7 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -537,7 +538,102 @@ def _audit_folder(content: Any) -> str | None:
     return name or None
 
 
-mcp = MCPServer("webperf", instructions=_instructions(ORDERING_ENABLED, CONVENTION_EDITS_ENABLED))
+# ---------------------------------------------------------------------------
+# Update check
+# ---------------------------------------------------------------------------
+# api.webperf.se/info reports the latest release (api.webperf.se 1.4.1+). We
+# ask Webperf, never GitHub, so the user's computer contacts no new third
+# party. One background request at startup; the first tool result of the
+# session then carries a short notice if this install is behind. Opt out with
+# WEBPERF_UPDATE_CHECK=false. Nothing here can make a tool fail.
+
+UPDATE_CHECK_ENABLED = os.environ.get("WEBPERF_UPDATE_CHECK", "").strip().lower() not in (
+    "0", "false", "no", "off",
+)
+_VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
+_update: dict[str, Any] = {"checked": False, "latest": None, "download_url": None, "noticed": False}
+_update_done = threading.Event()
+
+
+def _version_tuple(value: Any) -> tuple[int, int, int] | None:
+    match = _VERSION_RE.match(str(value or "").strip())
+    return tuple(int(x) for x in match.groups()) if match else None  # type: ignore[return-value]
+
+
+def _check_for_update() -> None:
+    try:
+        info = _request("GET", "/info", auth=False, cache=False)
+        block = info.get("mcp") if isinstance(info, dict) else None
+        if isinstance(block, dict) and _version_tuple(block.get("latest_version")):
+            _update["latest"] = str(block["latest_version"]).lstrip("v")
+            url = str(block.get("download_url") or "")
+            _update["download_url"] = url if url.startswith("https://") else None
+    except Exception:  # noqa: BLE001 - an update check must never break anything
+        pass
+    finally:
+        _update["checked"] = True
+        _update_done.set()
+
+
+def _start_update_check() -> None:
+    if UPDATE_CHECK_ENABLED and not _CONFIG_ERROR:
+        threading.Thread(target=_check_for_update, name="webperf-update-check", daemon=True).start()
+    else:
+        _update_done.set()
+
+
+def _update_available() -> bool:
+    latest, current = _version_tuple(_update["latest"]), _version_tuple(__version__)
+    return bool(latest and current and latest > current)
+
+
+def _update_status() -> dict:
+    return {
+        "server_version": __version__,
+        "latest_version": _update["latest"],
+        "update_available": _update_available(),
+        "update_check_enabled": UPDATE_CHECK_ENABLED,
+    }
+
+
+def _update_notice() -> str:
+    url = _update["download_url"] or RELEASES_URL
+    return (
+        f"Note for the user: webperf-mcp {_update['latest']} is available; this install is "
+        f"{__version__}. Mention it once. Claude Desktop extension users download the "
+        f".mcpb file from {url} and double-click it; manual installs update the version "
+        "in their MCP client config."
+    )
+
+
+async def _update_notice_middleware(ctx: Any, call_next: Any) -> Any:
+    """Append the update notice to the first successful tool result of the session."""
+    result = await call_next(ctx)
+    try:
+        if (
+            ctx.method == "tools/call"
+            and not _update["noticed"]
+            and _update_done.is_set()
+            and _update_available()
+            and isinstance(result, dict)
+            and not result.get("isError")
+            and isinstance(result.get("content"), list)
+        ):
+            result["content"].append({"type": "text", "text": _update_notice()})
+            _update["noticed"] = True
+    except Exception:  # noqa: BLE001
+        pass
+    return result
+
+
+RELEASES_URL = "https://github.com/Webperf-se/webperf-mcp/releases/latest"
+
+mcp = MCPServer(
+    "webperf",
+    version=__version__,
+    instructions=_instructions(ORDERING_ENABLED, CONVENTION_EDITS_ENABLED),
+    middleware=[_update_notice_middleware],
+)
 
 
 # ---------------------------------------------------------------------------
@@ -723,7 +819,7 @@ def check_api_key() -> dict:
     unreachable or misconfigured, plus a plain-language next_step,
     ordering_enabled, which says whether this install may order tests, and
     convention_edits_enabled, which says whether it may save the campaign
-    convention.
+    convention, and server_version, latest_version and update_available.
 
     Call this first when a keyed tool fails, or when the user asks whether
     their key is set up correctly.
@@ -731,6 +827,11 @@ def check_api_key() -> dict:
     result = _check_api_key()
     result["ordering_enabled"] = ORDERING_ENABLED
     result["convention_edits_enabled"] = CONVENTION_EDITS_ENABLED
+    if UPDATE_CHECK_ENABLED and not _update["checked"]:
+        _check_for_update()
+    result.update(_update_status())
+    if result["update_available"]:
+        result["update_url"] = _update["download_url"] or RELEASES_URL
     return result
 
 
@@ -2030,6 +2131,7 @@ I say yes.
 
 def main() -> None:
     """Console entry point: run the MCP server over stdio."""
+    _start_update_check()
     mcp.run()
 
 
