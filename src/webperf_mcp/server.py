@@ -27,7 +27,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 from mcp.server.mcpserver import MCPServer
@@ -46,9 +46,14 @@ LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 # Mirrors api.webperf.se's own format check (10-100 alphanumeric chars).
 _API_KEY_RE = re.compile(r"^[a-zA-Z0-9]{10,100}$")
 
+# Compact overview of a whole audit (webperf-agent-summary/1), a few tens of KB
+# whatever the page count. Only audits run since November 2026 have it.
+AUDIT_AGENT_SUMMARY = "agent_summary.json"
+
 # Report JSON files an audit can expose. Mirrors the API's allowlist, minus the
 # zip bundle, which is not useful as tool output.
 AUDIT_JSON_FILES = (
+    AUDIT_AGENT_SUMMARY,
     "accessibility_summary.json",
     "performance_summary.json",
     "seo_summary.json",
@@ -56,6 +61,11 @@ AUDIT_JSON_FILES = (
     "crux_summary.json",
     "privacy_summary.json",
 )
+
+# The per-category summaries grow with the page count and reach several MB on
+# big audits, which overflows a model's context. Above this many characters of
+# JSON, get_audit_file returns a pointer instead unless allow_large is set.
+AUDIT_FILE_MAX_CHARS = int(os.environ.get("WEBPERF_AUDIT_FILE_MAX_CHARS", "200000"))
 
 TEST_TYPE_LANGS = ("sv", "en", "da", "no", "fi", "is")
 
@@ -119,6 +129,11 @@ for trends, get_crux for real-visitor Core Web Vitals (LCP, CLS, INP) from Chrom
 list_test_types to turn numeric type_of_test ids into names. Only call
 get_raw_check_data when the user explicitly wants the raw machine data behind a
 score; it is large. The same goes for get_private_raw_check_data.
+
+For audits, start with get_audit_overview: one small file with scores, the
+most important issues, privacy findings and CrUX, each with a link into the
+HTML reports. Only open a category file with get_audit_file when the user needs
+detail the overview lacks; those files can be several MB.
 
 Ratings are on a 1-5 scale where 5 is best. -1 means not rated.
 
@@ -1475,32 +1490,105 @@ def list_audits(site_id: int) -> dict:
     sid = _site_id(site_id)
     # A read-only listing that the API happens to expose as POST.
     data = _request("POST", "/0.1/audits/", headers=_site_headers(sid), cache=False)
-    audits = []
-    for a in data.get("data", []) or []:
-        files = a.get("result_files") or {}
-        audits.append(
-            {
-                "audit_id": a.get("result_id"),
-                "title": a.get("title"),
-                "format": a.get("format"),
-                "date_modified": a.get("date_modified"),
-                "folder": _audit_folder(a.get("content")),
-                "files": sorted(files.keys()) if isinstance(files, dict) else files,
-            }
-        )
+    audits = [_audit_row(a) for a in data.get("data", []) or []]
     return {"site_id": sid, "count": len(audits), "audits": audits}
 
 
+def _audit_file_names(result_files: Any) -> list[str]:
+    """File names from result_files: a list of /audit_file/ URLs (or, in old
+    responses, a dict keyed by file name)."""
+    if isinstance(result_files, dict):
+        return sorted(result_files)
+    names = []
+    for item in result_files or []:
+        if not isinstance(item, str):
+            continue
+        name = (parse_qs(urlparse(item).query).get("file") or [""])[0] or item
+        names.append(name)
+    return names
+
+
+def _audit_row(a: dict) -> dict:
+    files = _audit_file_names(a.get("result_files"))
+    return {
+        "audit_id": a.get("result_id"),
+        "title": a.get("title"),
+        "format": a.get("format"),
+        "date_modified": a.get("date_modified"),
+        "folder": _audit_folder(a.get("content")),
+        "files": files,
+        "has_overview": AUDIT_AGENT_SUMMARY in files,
+    }
+
+
+def _fetch_audit_file(sid: int, folder: str, file: str) -> Any:
+    return _request(
+        "GET",
+        "/0.1/audit_file/",
+        headers=_site_headers(sid),
+        params={"folder": folder, "file": file},
+    )
+
+
 @mcp.tool(annotations=READ_ONLY)
-def get_audit_file(site_id: int, folder: str, file: str) -> dict:
+def get_audit_overview(site_id: int, audit_id: int | None = None) -> dict:
+    """Overview of an audit in one small file: start here for audits.
+
+    Scores per category, the most important issues (with WCAG references,
+    affected pages and fixes), privacy findings (cookies set without consent,
+    third parties outside the EU) and CrUX, each with a `dashboard` link into
+    the HTML report. A few tens of KB however many pages the audit covers.
+    `how_to_read` in the file explains the fields.
+
+    Args:
+        site_id: Numeric id of the site (from list_my_sites).
+        audit_id: An audit from list_audits. Default: the newest audit that has
+            an overview.
+    """
+    sid = _site_id(site_id)
+    data = _request("POST", "/0.1/audits/", headers=_site_headers(sid), cache=False)
+    rows = [_audit_row(a) for a in data.get("data", []) or []]
+    if audit_id is not None:
+        rows = [r for r in rows if r["audit_id"] == int(audit_id)]
+        if not rows:
+            raise WebperfError(f"No audit {int(audit_id)} for site {sid}.", kind="not_found")
+    with_overview = [r for r in rows if r["has_overview"] and r["folder"]]
+    if not with_overview:
+        which = f"Audit {int(audit_id)}" if audit_id is not None else "No audit for this site"
+        raise WebperfError(
+            f"{which} has no overview (agent_summary.json); only audits run since "
+            "November 2026 do. Use get_audit_file for one category instead, and "
+            "expect large files.",
+            kind="not_found",
+        )
+    row = max(with_overview, key=lambda r: r.get("date_modified") or "")
+    content = _fetch_audit_file(sid, row["folder"], AUDIT_AGENT_SUMMARY)
+    return {
+        "site_id": sid,
+        "audit_id": row["audit_id"],
+        "title": row["title"],
+        "folder": row["folder"],
+        "date_modified": row["date_modified"],
+        "content": content,
+    }
+
+
+@mcp.tool(annotations=READ_ONLY)
+def get_audit_file(site_id: int, folder: str, file: str, allow_large: bool = False) -> dict:
     """Read one JSON summary file from an audit.
+
+    Prefer get_audit_overview. The category files hold every page and can be
+    several MB; above the size limit you get the file's size and top-level keys
+    instead of its content, unless allow_large is true.
 
     Args:
         site_id: Numeric id of the site the audit belongs to.
         folder: The audit's folder name, from list_audits.
-        file: One of accessibility_summary.json, performance_summary.json,
-            seo_summary.json, best-practices_summary.json, crux_summary.json,
-            privacy_summary.json.
+        file: One of agent_summary.json, accessibility_summary.json,
+            performance_summary.json, seo_summary.json,
+            best-practices_summary.json, crux_summary.json, privacy_summary.json.
+        allow_large: Return the content even when it is over the size limit.
+            Only when the user wants detail the overview does not have.
     """
     sid = _site_id(site_id)
     folder = (folder or "").strip().strip("/")
@@ -1513,12 +1601,23 @@ def get_audit_file(site_id: int, folder: str, file: str) -> dict:
         raise WebperfError(
             f"file must be one of: {', '.join(AUDIT_JSON_FILES)}.", kind="bad_request"
         )
-    data = _request(
-        "GET",
-        "/0.1/audit_file/",
-        headers=_site_headers(sid),
-        params={"folder": folder, "file": file},
-    )
+    data = _fetch_audit_file(sid, folder, file)
+    size = len(json.dumps(data, ensure_ascii=False))
+    if size > AUDIT_FILE_MAX_CHARS and not allow_large:
+        return {
+            "site_id": sid,
+            "folder": folder,
+            "file": file,
+            "too_large": True,
+            "size_chars": size,
+            "limit_chars": AUDIT_FILE_MAX_CHARS,
+            "top_level_keys": sorted(data) if isinstance(data, dict) else None,
+            "hint": (
+                "Too large to return whole. Use get_audit_overview for the key "
+                "points, or call again with allow_large=true if the user needs "
+                "this file's full detail."
+            ),
+        }
     return {"site_id": sid, "folder": folder, "file": file, "content": data}
 
 

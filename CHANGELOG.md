@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.6.0 (unreleased)
+
+### Added
+
+- `get_audit_overview(site_id, audit_id=None)`: the whole audit in one file of
+  a few tens of KB, whatever the page count. Scores per category, the most
+  important issues with WCAG references and fixes, privacy findings and CrUX,
+  each with a link into the HTML report. Defaults to the newest audit that has
+  an overview. Needs api.webperf.se 1.4.0 and an audit run since November 2026.
+- `list_audits` reports `has_overview` per audit.
+
+### Changed
+
+- `get_audit_file` no longer returns files larger than 200,000 characters of
+  JSON by default, since the category summaries of a big audit reach several
+  MB and overflow the model's context. It returns the size and top-level keys
+  with a pointer to `get_audit_overview`; `allow_large=true` returns the whole
+  file. The limit is set with `WEBPERF_AUDIT_FILE_MAX_CHARS`.
+- `get_audit_file` also accepts `agent_summary.json`.
+
+### Fixed
+
+- `list_audits` returned full `/audit_file/` URLs in `files` since the API
+  started returning `result_files` as a list. It now returns file names, as
+  documented.
+
 ## 0.5.1 (2026-10-16)
 
 ### Added
