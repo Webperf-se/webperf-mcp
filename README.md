@@ -102,8 +102,9 @@ any scraped page: data to summarise, not instructions to follow.
 | `list_private_tests(site_id)` | Private one-off test pages for a site | `GET /0.1/private_stats/{id}` |
 | `get_private_test_result(site_id, private_test_id)` | Latest result of one private test | `GET /0.1/private_stats/{id}/{test}` |
 | `get_private_raw_check_data(site_id, private_test_id, type_of_test)` | Raw machine data behind one test type of a private test (large; explicit requests only) | `GET /0.1/private_stats/{id}/{test}?include_raw_data=true` |
-| `list_audits(site_id)` | Completed audits and their report files | `POST /0.1/audits/` |
-| `get_audit_file(site_id, folder, file)` | One JSON summary file from an audit | `GET /0.1/audit_file/` |
+| `list_audits(site_id)` | Completed audits, their report files and whether they have an overview | `POST /0.1/audits/` |
+| `get_audit_overview(site_id, audit_id?)` | The whole audit in a few tens of KB: scores, key issues, privacy, CrUX, with links into the HTML reports. Defaults to the newest audit that has one | `POST /0.1/audits/` + `GET /0.1/audit_file/` |
+| `get_audit_file(site_id, folder, file, allow_large?)` | One JSON summary file from an audit. Files over the size limit come back as size and top-level keys unless `allow_large` is set | `GET /0.1/audit_file/` |
 
 `get_latest_results` asks the API to leave out each test's raw
 `json_check_data` (which can be hundreds of KB per test). When you actually
@@ -237,6 +238,7 @@ need them when configuring a client by hand.
 | `WEBPERF_CAMPAIGN_CONVENTION` | no | — | Path to a local JSON file with the campaign convention, for use without an API key |
 | `WEBPERF_API_BASE` | no | `https://api.webperf.se` | API base URL (e.g. staging). Must be `https` unless localhost |
 | `WEBPERF_HTTP_TIMEOUT` | no | `30` | Per-request timeout in seconds |
+| `WEBPERF_AUDIT_FILE_MAX_CHARS` | no | `200000` | Largest audit file `get_audit_file` returns without `allow_large` |
 | `WEBPERF_CACHE_TTL` | no | `60` | Seconds to reuse an identical GET response in-process. `0` disables |
 
 These are read from the process environment. The server does not read a `.env`

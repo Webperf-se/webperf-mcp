@@ -636,6 +636,82 @@ def test_list_audits_extracts_folder():
     assert out["audits"][0]["files"] == ["crux_summary.json"]
 
 
+def _audit_url(folder, file):
+    return f"https://api.webperf.se/0.1/audit_file/?folder={folder}&file={file}"
+
+
+def _audits_payload():
+    old = "gammal.se_20260801-summary_reports"
+    new = "ny.se_20261109-summary_reports"
+    return {
+        "data": [
+            {
+                "result_id": 1,
+                "title": "Old",
+                "format": "audit_v2",
+                "date_modified": "2026-08-01T10:00:00+02:00",
+                "content": f'{{"folder": "/static/results/{old}/"}}',
+                "result_files": [_audit_url(old, "seo_summary.json")],
+            },
+            {
+                "result_id": 2,
+                "title": "New",
+                "format": "audit_v2",
+                "date_modified": "2026-11-09T10:00:00+01:00",
+                "content": f'{{"folder": "/static/results/{new}/"}}',
+                "result_files": [
+                    _audit_url(new, "seo_summary.json"),
+                    _audit_url(new, "agent_summary.json"),
+                ],
+            },
+        ]
+    }
+
+
+def test_list_audits_names_files_from_urls():
+    install(lambda r: json_response(200, _audits_payload()))
+    out = server.list_audits(3843)
+    assert out["audits"][1]["files"] == ["seo_summary.json", "agent_summary.json"]
+    assert out["audits"][1]["has_overview"] is True
+    assert out["audits"][0]["has_overview"] is False
+
+
+def test_get_audit_overview_picks_newest_with_overview():
+    seen = []
+
+    def handler(request):
+        if request.url.path.endswith("/audits/"):
+            return json_response(200, _audits_payload())
+        seen.append(dict(request.url.params))
+        return json_response(200, {"schema": "webperf-agent-summary/1"})
+
+    install(handler)
+    out = server.get_audit_overview(3843)
+    assert out["audit_id"] == 2
+    assert out["content"]["schema"] == "webperf-agent-summary/1"
+    assert seen == [{"folder": "ny.se_20261109-summary_reports", "file": "agent_summary.json"}]
+
+
+def test_get_audit_overview_without_overview_is_not_found():
+    install(lambda r: json_response(200, _audits_payload()))
+    with pytest.raises(server.WebperfError) as exc:
+        server.get_audit_overview(3843, audit_id=1)
+    assert exc.value.kind == "not_found"
+    with pytest.raises(server.WebperfError):
+        server.get_audit_overview(3843, audit_id=99)
+
+
+def test_get_audit_file_guards_large_files(monkeypatch):
+    monkeypatch.setattr(server, "AUDIT_FILE_MAX_CHARS", 100)
+    install(lambda r: json_response(200, {"pages": ["x" * 50] * 10, "meta": {}}))
+    out = server.get_audit_file(3843, "folder", "seo_summary.json")
+    assert out["too_large"] is True
+    assert out["top_level_keys"] == ["meta", "pages"]
+    assert "content" not in out
+    out = server.get_audit_file(3843, "folder", "seo_summary.json", allow_large=True)
+    assert len(out["content"]["pages"]) == 10
+
+
 # --- open data ------------------------------------------------------------
 
 

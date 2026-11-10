@@ -38,6 +38,7 @@ EXPECTED_TOOLS = {
     "get_private_test_result",
     "get_private_raw_check_data",
     "list_audits",
+    "get_audit_overview",
     "get_audit_file",
     "get_campaign_convention",
     "build_campaign_url",
